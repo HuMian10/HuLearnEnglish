@@ -11,13 +11,14 @@ async def list_words(
     search: str = Query("", description="Search word or meaning"),
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=200),
+    word_book_id: int = Query(0, description="Filter by word book id"),
 ):
-    return await get_words(category, search, page, page_size)
+    return await get_words(category, search, page, page_size, word_book_id)
 
 
 @router.get("/categories")
-async def list_categories():
-    return await get_categories()
+async def list_categories(word_book_id: int = Query(0, description="Filter by word book id")):
+    return await get_categories(word_book_id)
 
 
 @router.get("/{word_id}")

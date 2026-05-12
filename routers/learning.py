@@ -6,6 +6,7 @@ from services.learning_service import (
     generate_daily_plan, get_today_plan, submit_review,
     get_learning_stats, get_plan_words, get_settings, update_setting,
     get_calendar_month, get_day_detail, clear_day_progress, clear_all_plans,
+    get_due_review_words, continue_plan,
 )
 
 plan_router = APIRouter()
@@ -46,6 +47,15 @@ async def generate_plan(user_id: int = Depends(get_current_user_id)):
     return {"plan": plan, "words": words, "remaining": remaining}
 
 
+@plan_router.post("/continue")
+async def continue_learning(user_id: int = Depends(get_current_user_id)):
+    plan = await continue_plan(user_id)
+    if not plan:
+        return {"message": "No more new words available!"}
+    words, remaining = await get_plan_words(user_id)
+    return {"plan": plan, "words": words, "remaining": remaining}
+
+
 # --- Learning routes ---
 
 @router.post("/review")
@@ -64,6 +74,12 @@ async def learning_stats(user_id: int = Depends(get_current_user_id)):
 async def plan_words_list(user_id: int = Depends(get_current_user_id)):
     words, remaining = await get_plan_words(user_id)
     return {"words": words, "remaining": remaining}
+
+
+@router.get("/due-review")
+async def due_review_words(user_id: int = Depends(get_current_user_id)):
+    words = await get_due_review_words(user_id)
+    return {"words": words}
 
 
 # --- Settings routes ---

@@ -19,3 +19,13 @@ ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "1440
 # 服务
 HOST = os.getenv("HOST", "0.0.0.0")
 PORT = int(os.getenv("PORT", "8000"))
+
+# 邮件配置
+SMTP_SERVER = os.getenv("SMTP_SERVER", "smtp.163.com")
+SMTP_PORT = int(os.getenv("SMTP_PORT", "465"))
+SENDER_EMAIL = os.getenv("SENDER_EMAIL", "hulearnenglish@163.com")
+SENDER_PASSWORD = os.getenv("SENDER_PASSWORD", "")
+
+# 邮件发送时间（24h）
+MORNING_EMAIL_HOUR = int(os.getenv("MORNING_EMAIL_HOUR", "8"))
+EVENING_EMAIL_HOUR = int(os.getenv("EVENING_EMAIL_HOUR", "21"))
