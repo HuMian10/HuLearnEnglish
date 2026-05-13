@@ -22,12 +22,14 @@ const togglePopup = inject('togglePopup')
   position: fixed;
   top: 0; left: 0; right: 0;
   height: 52px;
+  padding-top: env(safe-area-inset-top);
   background: var(--surface);
   border-bottom: 1px solid var(--border);
   z-index: 100;
   align-items: center;
   justify-content: space-between;
-  padding: 0 16px;
+  padding-left: 16px;
+  padding-right: 16px;
 }
 
 .mobile-header-brand {

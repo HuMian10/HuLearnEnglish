@@ -54,5 +54,6 @@ onUnmounted(() => document.removeEventListener('click', handleDocumentClick))
 <style scoped>
 .app-container {
   min-height: 100vh;
+  min-height: 100dvh;
 }
 </style>

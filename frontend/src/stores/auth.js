@@ -31,7 +31,7 @@ export const useAuthStore = defineStore('auth', {
         body: JSON.stringify({ username, password }),
       })
       if (data.ok) {
-        this.user = { id: data.user_id, username: data.username, email: '' }
+        await this.check()
         return true
       }
       throw new Error(data.error || '登录失败')
@@ -42,7 +42,7 @@ export const useAuthStore = defineStore('auth', {
         body: JSON.stringify({ username, password, email }),
       })
       if (data.ok) {
-        this.user = { id: data.user_id, username: data.username, email: email || '' }
+        await this.check()
         return true
       }
       throw new Error(data.error || '注册失败')

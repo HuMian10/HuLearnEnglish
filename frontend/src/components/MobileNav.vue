@@ -34,6 +34,7 @@ const navItems = [
   bottom: 0; left: 0;
   width: 100%;
   height: var(--mobile-nav-height);
+  padding-bottom: env(safe-area-inset-bottom);
   background: var(--surface);
   border-top: 1px solid var(--border);
   z-index: 100;
