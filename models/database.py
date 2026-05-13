@@ -199,6 +199,23 @@ async def init_database(db_path: str = DB_PATH):
         )
         await db.commit()
 
+    # Migrate: add default learning mode settings for existing users
+    async with aiosqlite.connect(db_path) as db:
+        mode_defaults = [
+            ("recognize_mode", "direct"),
+            ("learn_mode", "flip"),
+            ("review_mode", "select_meaning"),
+        ]
+        cursor = await db.execute("SELECT id FROM users")
+        rows = await cursor.fetchall()
+        for row in rows:
+            for key, value in mode_defaults:
+                await db.execute(
+                    "INSERT OR IGNORE INTO settings (user_id, key, value) VALUES (?, ?, ?)",
+                    (row[0], key, value)
+                )
+        await db.commit()
+
 
 async def close_db():
     global _db

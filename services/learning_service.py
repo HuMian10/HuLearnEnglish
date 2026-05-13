@@ -71,7 +71,7 @@ async def _fetch_new_words(user_id: int, count: int) -> list[int]:
 
 
 async def _fetch_review_words(user_id: int) -> list[int]:
-    """Fetch word IDs due for review today."""
+    """Fetch word IDs due for review today (only learned/mastered words)."""
     db = await get_db()
     today = datetime.now().strftime("%Y-%m-%d")
     active_book_ids = await get_active_book_ids(user_id)
@@ -81,8 +81,9 @@ async def _fetch_review_words(user_id: int) -> list[int]:
     cursor = await db.execute(
         f"""SELECT DISTINCT lp.word_id FROM learning_progress lp
            JOIN word_book_words wbw ON lp.word_id = wbw.word_id
-           WHERE lp.user_id = ? AND lp.status IN ('learning', 'new')
+           WHERE lp.user_id = ? AND lp.status IN ('learning', 'mastered')
            AND lp.next_review <= ? AND lp.next_review != ''
+           AND lp.review_count > 0
            AND wbw.word_book_id IN ({placeholders})
            ORDER BY lp.next_review""",
         (user_id, today, *active_book_ids)
@@ -235,7 +236,9 @@ async def submit_review(user_id: int, word_id: int, correct: bool):
         old_streak = p.get("streak", 0) or 0
         new_streak = old_streak + 1 if correct else 0
 
-        if new_review_count >= 5 and new_correct_count / new_review_count >= 0.8:
+        if not correct and p["status"] == "mastered":
+            new_status = "learning"
+        elif new_review_count >= 5 and new_correct_count / new_review_count >= 0.8:
             new_status = "mastered"
         elif new_review_count >= 1:
             new_status = "learning"
@@ -282,22 +285,45 @@ async def get_learning_stats(user_id: int):
         )).fetchone())[0]
     else:
         total_words = 0
-    new_count = (await (await db.execute(
-        "SELECT COUNT(*) FROM learning_progress WHERE user_id=? AND status='new'", (user_id,)
-    )).fetchone())[0]
-    learning_count = (await (await db.execute(
-        "SELECT COUNT(*) FROM learning_progress WHERE user_id=? AND status='learning'", (user_id,)
-    )).fetchone())[0]
-    mastered_count = (await (await db.execute(
-        "SELECT COUNT(*) FROM learning_progress WHERE user_id=? AND status='mastered'", (user_id,)
-    )).fetchone())[0]
+
+    if active_book_ids:
+        placeholders = ",".join("?" * len(active_book_ids))
+        new_count = (await (await db.execute(
+            f"""SELECT COUNT(DISTINCT lp.word_id) FROM learning_progress lp
+               JOIN word_book_words wbw ON lp.word_id = wbw.word_id
+               WHERE lp.user_id=? AND lp.status='new' AND wbw.word_book_id IN ({placeholders})""",
+            [user_id] + active_book_ids
+        )).fetchone())[0]
+        learning_count = (await (await db.execute(
+            f"""SELECT COUNT(DISTINCT lp.word_id) FROM learning_progress lp
+               JOIN word_book_words wbw ON lp.word_id = wbw.word_id
+               WHERE lp.user_id=? AND lp.status='learning' AND wbw.word_book_id IN ({placeholders})""",
+            [user_id] + active_book_ids
+        )).fetchone())[0]
+        mastered_count = (await (await db.execute(
+            f"""SELECT COUNT(DISTINCT lp.word_id) FROM learning_progress lp
+               JOIN word_book_words wbw ON lp.word_id = wbw.word_id
+               WHERE lp.user_id=? AND lp.status='mastered' AND wbw.word_book_id IN ({placeholders})""",
+            [user_id] + active_book_ids
+        )).fetchone())[0]
+    else:
+        new_count = 0
+        learning_count = 0
+        mastered_count = 0
 
     today = datetime.now().strftime("%Y-%m-%d")
-    due_review = (await (await db.execute(
-        """SELECT COUNT(*) FROM learning_progress
-           WHERE user_id=? AND status IN ('new','learning') AND next_review <= ? AND next_review != ''""",
-        (user_id, today)
-    )).fetchone())[0]
+    if active_book_ids:
+        placeholders = ",".join("?" * len(active_book_ids))
+        due_review = (await (await db.execute(
+            f"""SELECT COUNT(DISTINCT lp.word_id) FROM learning_progress lp
+               JOIN word_book_words wbw ON lp.word_id = wbw.word_id
+               WHERE lp.user_id=? AND lp.status IN ('learning','mastered') AND lp.next_review <= ? AND lp.next_review != ''
+               AND lp.review_count > 0
+               AND wbw.word_book_id IN ({placeholders})""",
+            [user_id, today] + active_book_ids
+        )).fetchone())[0]
+    else:
+        due_review = 0
 
     cursor = await db.execute(
         "SELECT * FROM daily_plan WHERE user_id = ? AND date = ?", (user_id, today)
@@ -318,7 +344,7 @@ async def get_learning_stats(user_id: int):
         "due_review": due_review,
         "today_total": today_total,
         "today_completed": today_completed,
-        "unlearned": total_words - new_count - learning_count - mastered_count,
+        "unlearned": max(0, total_words - new_count - learning_count - mastered_count),
     }
 
 
@@ -434,22 +460,36 @@ async def clear_day_progress(user_id: int, date: str):
     if not plan:
         return
 
+    p = dict(plan)
+    word_ids = json.loads(p.get("word_ids") or "[]")
+    review_ids = json.loads(p.get("review_ids") or "[]")
+    all_ids = word_ids + review_ids
+
     await db.execute(
         "UPDATE daily_plan SET completed_ids = '[]', completed = 0 WHERE user_id = ? AND date = ?",
         (user_id, date),
     )
+
+    if all_ids:
+        placeholders = ",".join("?" * len(all_ids))
+        await db.execute(
+            f"DELETE FROM learning_progress WHERE user_id=? AND word_id IN ({placeholders})",
+            [user_id] + all_ids
+        )
+
     await db.commit()
 
 
 async def clear_all_plans(user_id: int):
-    """Delete all daily plans for a user."""
+    """Delete all daily plans and learning progress for a user, allowing a full restart."""
     db = await get_db()
     await db.execute("DELETE FROM daily_plan WHERE user_id = ?", (user_id,))
+    await db.execute("DELETE FROM learning_progress WHERE user_id = ?", (user_id,))
     await db.commit()
 
 
 async def get_due_review_words(user_id: int):
-    """Get words that are due for review today, separate from new learning."""
+    """Get words that are due for review today (only learned/mastered words)."""
     db = await get_db()
     today = datetime.now().strftime("%Y-%m-%d")
 
@@ -461,8 +501,9 @@ async def get_due_review_words(user_id: int):
     cursor = await db.execute(
         f"""SELECT DISTINCT lp.word_id FROM learning_progress lp
            JOIN word_book_words wbw ON lp.word_id = wbw.word_id
-           WHERE lp.user_id = ? AND lp.status IN ('learning', 'new')
+           WHERE lp.user_id = ? AND lp.status IN ('learning', 'mastered')
            AND lp.next_review <= ? AND lp.next_review != ''
+           AND lp.review_count > 0
            AND wbw.word_book_id IN ({placeholders})
            ORDER BY lp.next_review""",
         (user_id, today, *active_book_ids)

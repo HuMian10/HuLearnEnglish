@@ -58,6 +58,9 @@ async def register(username: str, password: str, email: str = "") -> dict:
         ("llm_api_url", "https://api.deepseek.com/v1/chat/completions"),
         ("llm_api_key", ""),
         ("llm_model", "deepseek-chat"),
+        ("recognize_mode", "direct"),
+        ("learn_mode", "flip"),
+        ("review_mode", "select_meaning"),
     ]
     for key, value in defaults:
         await db.execute(

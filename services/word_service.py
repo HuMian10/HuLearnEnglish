@@ -93,3 +93,28 @@ async def get_word_count(word_book_id: int = 0):
     else:
         cursor = await db.execute("SELECT COUNT(*) FROM words")
     return (await cursor.fetchone())[0]
+
+
+async def get_distractors(word_id: int, count: int = 3) -> list[dict]:
+    """Get distractor words for quiz options. Prefers same category, excludes the given word."""
+    db = await get_db()
+    # First try same category
+    cursor = await db.execute(
+        "SELECT id, word, meaning_cn, category FROM words WHERE id != ? AND category = (SELECT category FROM words WHERE id = ?) ORDER BY RANDOM() LIMIT ?",
+        (word_id, word_id, count)
+    )
+    rows = await cursor.fetchall()
+    distractors = [_parse_word(dict(row)) for row in rows]
+
+    # Fill remaining from any category
+    if len(distractors) < count:
+        exclude_ids = [word_id] + [d["id"] for d in distractors]
+        placeholders = ",".join("?" * len(exclude_ids))
+        cursor = await db.execute(
+            f"SELECT id, word, meaning_cn, category FROM words WHERE id NOT IN ({placeholders}) ORDER BY RANDOM() LIMIT ?",
+            exclude_ids + [count - len(distractors)]
+        )
+        rows = await cursor.fetchall()
+        distractors.extend([_parse_word(dict(row)) for row in rows])
+
+    return distractors
