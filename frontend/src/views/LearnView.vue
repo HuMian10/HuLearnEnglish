@@ -32,8 +32,30 @@ const selectedIdx = ref(null)
 const answerCorrect = ref(null)
 const distractors = ref([])
 
-const recognizeMode = computed(() => learning.recognizeMode)
-const learnMode = computed(() => learning.learnMode)
+const QUIZ_ORDER = ['select_meaning', 'select_word', 'spell', 'dictation']
+
+const recognizeModes = computed(() => {
+  const raw = learning.recognizeMode || 'direct'
+  const modes = raw.includes(',') ? raw.split(',') : [raw]
+  return sortByOrder(modes)
+})
+const learnModes = computed(() => {
+  const raw = learning.learnMode || 'flip'
+  const modes = raw.includes(',') ? raw.split(',') : [raw]
+  return sortByOrder(modes)
+})
+
+function sortByOrder(modes) {
+  const special = modes.filter(m => !QUIZ_ORDER.includes(m))
+  const quizModes = QUIZ_ORDER.filter(o => modes.includes(o))
+  return [...special, ...quizModes]
+}
+
+// Queue of quiz types to go through for the current word
+const quizQueue = ref([])
+const quizQueueIndex = ref(0)
+
+const isLastInQueue = computed(() => quizQueueIndex.value >= quizQueue.value.length - 1)
 
 onMounted(async () => {
   await learning.fetchSettings()
@@ -141,26 +163,41 @@ function buildOptionList(type) {
 // === Flow ===
 
 function onRecognize() {
-  if (recognizeMode.value === 'direct') {
-    // No quiz, go straight to showing the card
+  const modes = recognizeModes.value.filter(m => m !== 'direct')
+  if (modes.length === 0) {
     answerAction.value = 'mark_known'
     phase.value = 'show_answer'
     return
   }
-  startQuiz(recognizeMode.value)
+  quizQueue.value = [...modes]
+  quizQueueIndex.value = 0
+  startQuiz(quizQueue.value[0])
   phase.value = 'recognize_quiz'
 }
 
 function onDontKnow() {
-  // Immediately flip, then practice
-  answerAction.value = learnMode.value === 'flip' ? 'mark_unknown' : 'practice'
+  const practiceModes = learnModes.value.filter(m => m !== 'flip')
+  answerAction.value = practiceModes.length > 0 ? 'practice' : 'mark_unknown'
   phase.value = 'show_answer'
 }
 
 function startPractice() {
   resetQuiz()
-  startQuiz(learnMode.value)
+  const practiceModes = learnModes.value.filter(m => m !== 'flip')
+  quizQueue.value = [...practiceModes]
+  quizQueueIndex.value = 0
+  startQuiz(quizQueue.value[0])
   phase.value = 'practice_quiz'
+}
+
+function nextInQueue() {
+  quizQueueIndex.value++
+  if (quizQueueIndex.value < quizQueue.value.length) {
+    resetQuiz()
+    startQuiz(quizQueue.value[quizQueueIndex.value])
+    return true
+  }
+  return false
 }
 
 function startQuiz(type) {
@@ -218,18 +255,28 @@ function checkSpell() {
 }
 
 function afterQuizAnswer(correct) {
+  // Just record the result, don't auto-advance.
+  // User clicks a button to proceed (handled by onQuizNext).
+}
+
+function onQuizNext() {
   if (phase.value === 'recognize_quiz') {
-    if (correct) {
-      // Correct → flip card, mark as known
+    if (!answerCorrect.value) {
+      const practiceModes = learnModes.value.filter(m => m !== 'flip')
+      answerAction.value = practiceModes.length > 0 ? 'practice' : 'mark_unknown'
+      phase.value = 'show_answer'
+      return
+    }
+    const hasMore = nextInQueue()
+    if (!hasMore) {
       answerAction.value = 'mark_known'
-      setTimeout(() => { phase.value = 'show_answer' }, 800)
-    } else {
-      // Wrong → flip card, then practice (same as 不认识 flow)
-      answerAction.value = learnMode.value === 'flip' ? 'mark_unknown' : 'practice'
-      setTimeout(() => { phase.value = 'show_answer' }, 800)
+      phase.value = 'show_answer'
     }
   } else if (phase.value === 'practice_quiz') {
-    setTimeout(() => markWord(false), 800)
+    const hasMore = nextInQueue()
+    if (!hasMore) {
+      markWord(false)
+    }
   }
 }
 
@@ -452,7 +499,7 @@ async function sendChat() {
     <!-- Phase: recognize_quiz — quiz overlay while word stays on front -->
     <template v-if="phase === 'recognize_quiz'">
       <div class="quiz-card">
-        <div class="quiz-card-badge recognize">认识验证</div>
+        <div class="quiz-card-badge recognize">认识验证 <span v-if="quizQueue.length > 1" class="quiz-step">{{ quizQueueIndex + 1 }}/{{ quizQueue.length }}</span></div>
 
         <template v-if="quizType === 'select_meaning'">
           <div class="quiz-prompt-word">{{ current.word }}</div>
@@ -520,6 +567,7 @@ async function sendChat() {
         <div v-if="answered" class="quiz-result" :class="{ correct: answerCorrect, wrong: !answerCorrect }">
           {{ answerCorrect ? '回答正确! ✓' : '回答错误 ✗' }}
         </div>
+        <button v-if="answered" class="btn btn-primary quiz-next-btn" @click="onQuizNext">{{ isLastInQueue ? '下一个单词' : '下一题' }}</button>
       </div>
     </template>
 
@@ -567,7 +615,7 @@ async function sendChat() {
     <!-- Phase: practice_quiz — practice quiz card -->
     <template v-if="phase === 'practice_quiz'">
       <div class="quiz-card">
-        <div class="quiz-card-badge practice">练习模式</div>
+        <div class="quiz-card-badge practice">练习模式 <span v-if="quizQueue.length > 1" class="quiz-step">{{ quizQueueIndex + 1 }}/{{ quizQueue.length }}</span></div>
 
         <template v-if="quizType === 'select_meaning'">
           <div class="quiz-prompt-word">{{ current.word }}</div>
@@ -635,6 +683,7 @@ async function sendChat() {
         <div v-if="answered" class="quiz-result" :class="{ correct: answerCorrect, wrong: !answerCorrect }">
           {{ answerCorrect ? '回答正确! ✓' : '回答错误 ✗' }}
         </div>
+        <button v-if="answered" class="btn btn-primary quiz-next-btn" @click="onQuizNext">{{ isLastInQueue ? '下一个单词' : '下一题' }}</button>
       </div>
     </template>
   </template>
@@ -664,13 +713,21 @@ async function sendChat() {
 }
 
 .quiz-card-badge {
-  display: inline-block;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   padding: 4px 14px;
   border-radius: 20px;
   font-size: 12px;
   font-weight: 600;
   letter-spacing: 0.5px;
   margin-bottom: 20px;
+}
+
+.quiz-step {
+  font-size: 11px;
+  font-weight: 500;
+  opacity: 0.7;
 }
 
 .quiz-card-badge.recognize {
@@ -788,6 +845,13 @@ async function sendChat() {
 
 .quiz-result.correct { color: var(--success); }
 .quiz-result.wrong { color: var(--danger); }
+
+.quiz-next-btn {
+  margin-top: 16px;
+  padding: 10px 32px;
+  font-size: 15px;
+  border-radius: 10px;
+}
 
 .dictation-play-btn {
   display: inline-flex;

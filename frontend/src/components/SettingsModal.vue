@@ -27,21 +27,21 @@ const emailSavedMsg = ref('')
 
 // Learning settings
 const dailyWords = ref(10)
-const recognizeMode = ref('direct')
-const learnMode = ref('flip')
+const recognizeModes = ref(['direct'])
+const learnModes = ref(['flip'])
 const recognizeModeOptions = [
-  { value: 'direct', label: '直接标记' },
-  { value: 'select_meaning', label: '选释义' },
-  { value: 'spell', label: '拼写' },
-  { value: 'select_word', label: '选单词' },
-  { value: 'dictation', label: '听写' },
+  { value: 'direct', label: '直接标记', desc: '不验证' },
+  { value: 'select_meaning', label: '选释义', desc: '看单词选释义' },
+  { value: 'select_word', label: '选单词', desc: '看释义选单词' },
+  { value: 'spell', label: '拼写', desc: '看释义拼写' },
+  { value: 'dictation', label: '听写', desc: '听音频拼写' },
 ]
 const learnModeOptions = [
-  { value: 'flip', label: '翻卡查看' },
-  { value: 'select_meaning', label: '选释义' },
-  { value: 'spell', label: '拼写' },
-  { value: 'select_word', label: '选单词' },
-  { value: 'dictation', label: '听写' },
+  { value: 'flip', label: '翻卡查看', desc: '翻转查看详情' },
+  { value: 'select_meaning', label: '选释义', desc: '看单词选释义' },
+  { value: 'select_word', label: '选单词', desc: '看释义选单词' },
+  { value: 'spell', label: '拼写', desc: '看释义拼写' },
+  { value: 'dictation', label: '听写', desc: '听音频拼写' },
 ]
 const learningSaved = ref(false)
 
@@ -101,8 +101,28 @@ async function loadUserInfo() {
 async function loadLearningSettings() {
   await learning.fetchSettings()
   dailyWords.value = learning.settings?.daily_words || 10
-  recognizeMode.value = learning.settings?.recognize_mode || 'direct'
-  learnMode.value = learning.settings?.learn_mode || 'flip'
+  const rm = learning.settings?.recognize_mode || 'direct'
+  recognizeModes.value = rm.includes(',') ? rm.split(',') : [rm]
+  const lm = learning.settings?.learn_mode || 'flip'
+  learnModes.value = lm.includes(',') ? lm.split(',') : [lm]
+}
+
+function toggleRecognizeMode(val) {
+  const idx = recognizeModes.value.indexOf(val)
+  if (idx >= 0) {
+    if (recognizeModes.value.length > 1) recognizeModes.value.splice(idx, 1)
+  } else {
+    recognizeModes.value.push(val)
+  }
+}
+
+function toggleLearnMode(val) {
+  const idx = learnModes.value.indexOf(val)
+  if (idx >= 0) {
+    if (learnModes.value.length > 1) learnModes.value.splice(idx, 1)
+  } else {
+    learnModes.value.push(val)
+  }
 }
 
 async function loadWordBooks() {
@@ -144,10 +164,10 @@ async function bindEmail() {
 
 async function saveLearningSettings() {
   await learning.saveSetting('daily_words', dailyWords.value)
-  await learning.saveSetting('recognize_mode', recognizeMode.value)
-  await learning.saveSetting('learn_mode', learnMode.value)
-  learning.recognizeMode = recognizeMode.value
-  learning.learnMode = learnMode.value
+  await learning.saveSetting('recognize_mode', recognizeModes.value.join(','))
+  await learning.saveSetting('learn_mode', learnModes.value.join(','))
+  learning.recognizeMode = recognizeModes.value.join(',')
+  learning.learnMode = learnModes.value.join(',')
   learningSaved.value = true
   setTimeout(() => learningSaved.value = false, 2000)
 }
@@ -273,24 +293,24 @@ function closeOnOverlay(e) {
                 </div>
               </div>
 
-              <div class="s-section-title">认识验证模式</div>
-              <div class="s-section">
-                <div v-for="opt in recognizeModeOptions" :key="opt.value" class="s-row clickable" @click="recognizeMode = opt.value">
-                  <span class="s-row-label">{{ opt.label }}</span>
-                  <div v-if="recognizeMode === opt.value" class="s-check">
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
-                  </div>
-                </div>
+              <div class="s-section-title">认识验证模式 <span class="s-section-hint">可多选，随机出题</span></div>
+              <div class="s-chip-group">
+                <button v-for="opt in recognizeModeOptions" :key="opt.value"
+                  class="s-chip" :class="{ on: recognizeModes.includes(opt.value) }"
+                  @click="toggleRecognizeMode(opt.value)">
+                  <span class="s-chip-label">{{ opt.label }}</span>
+                  <span class="s-chip-desc">{{ opt.desc }}</span>
+                </button>
               </div>
 
-              <div class="s-section-title">不认识练习模式</div>
-              <div class="s-section">
-                <div v-for="opt in learnModeOptions" :key="opt.value" class="s-row clickable" @click="learnMode = opt.value">
-                  <span class="s-row-label">{{ opt.label }}</span>
-                  <div v-if="learnMode === opt.value" class="s-check">
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
-                  </div>
-                </div>
+              <div class="s-section-title">不认识练习模式 <span class="s-section-hint">可多选，随机出题</span></div>
+              <div class="s-chip-group">
+                <button v-for="opt in learnModeOptions" :key="opt.value"
+                  class="s-chip" :class="{ on: learnModes.includes(opt.value) }"
+                  @click="toggleLearnMode(opt.value)">
+                  <span class="s-chip-label">{{ opt.label }}</span>
+                  <span class="s-chip-desc">{{ opt.desc }}</span>
+                </button>
               </div>
 
               <button class="s-action-btn" @click="saveLearningSettings">保存设置</button>
@@ -498,8 +518,61 @@ function closeOnOverlay(e) {
   color: var(--text-secondary);
   text-transform: uppercase;
   letter-spacing: 0.5px;
-  padding: 16px 16px 6px;
+  padding: 16px 0 6px;
 }
+
+.s-section-hint {
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: 0;
+  font-size: 11px;
+  opacity: 0.7;
+}
+
+/* Chip group */
+.s-chip-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.s-chip {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 10px 16px;
+  border: 1.5px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+  cursor: pointer;
+  transition: all 0.2s;
+  min-width: 72px;
+}
+
+.s-chip:hover { border-color: #c7d2fe; background: #fafaff; }
+
+.s-chip.on {
+  border-color: var(--primary);
+  background: #eef2ff;
+  box-shadow: 0 0 0 1px var(--primary);
+}
+
+.s-chip-label {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.s-chip.on .s-chip-label { color: var(--primary); }
+
+.s-chip-desc {
+  font-size: 10px;
+  color: var(--text-secondary);
+  line-height: 1.2;
+}
+
+.s-chip.on .s-chip-desc { color: var(--primary-light); }
 
 .s-row {
   display: flex;
