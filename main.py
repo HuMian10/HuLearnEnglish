@@ -49,7 +49,7 @@ async def _email_scheduler():
 @asynccontextmanager
 async def lifespan(app):
     # Startup
-    await init_database(DB_PATH)
+    # await init_database(DB_PATH)
 
     # Start email scheduler only if password is configured
     email_task = None
