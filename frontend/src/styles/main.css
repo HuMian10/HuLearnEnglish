@@ -256,7 +256,7 @@ body {
 }
 
 /* ===== LLM ===== */
-.learn-llm { margin-top: 24px; max-width: 460px; margin-left: auto; margin-right: auto; }
+.learn-llm { margin-top: 24px; max-width: 460px; margin-left: auto; margin-right: auto; padding-bottom: 80px; }
 .llm-quick-actions { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; margin-bottom: 16px; }
 
 .llm-examples { display: flex; flex-direction: column; gap: 10px; }

@@ -611,7 +611,7 @@ async function sendChat() {
         </div>
       </div>
       <div class="learn-actions">
-        <button v-if="answerAction === 'mark_known'" class="btn btn-success" @click="markWord(true)">✓ 认识，下一个</button>
+        <button v-if="answerAction === 'mark_known'" class="btn btn-success" @click="markWord(true)">下一个</button>
         <button v-if="answerAction === 'mark_unknown'" class="btn btn-primary" @click="markWord(false)">下一个</button>
         <button v-if="answerAction === 'practice'" class="btn btn-primary" @click="startPractice">开始练习</button>
       </div>
