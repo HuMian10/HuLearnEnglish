@@ -6,7 +6,7 @@ from services.learning_service import (
     generate_daily_plan, get_today_plan, submit_review,
     get_learning_stats, get_plan_words, get_settings, update_setting,
     get_calendar_month, get_day_detail, clear_day_progress, clear_all_plans,
-    get_due_review_words, continue_plan,
+    get_due_review_words, continue_plan, mark_word_mastered,
 )
 
 plan_router = APIRouter()
@@ -61,6 +61,17 @@ async def continue_learning(user_id: int = Depends(get_current_user_id)):
 @router.post("/review")
 async def review_word(req: ReviewRequest, user_id: int = Depends(get_current_user_id)):
     await submit_review(user_id, req.word_id, req.correct)
+    stats = await get_learning_stats(user_id)
+    return {"status": "ok", "stats": stats}
+
+
+class MasterRequest(BaseModel):
+    word_id: int
+
+
+@router.post("/master")
+async def master_word(req: MasterRequest, user_id: int = Depends(get_current_user_id)):
+    await mark_word_mastered(user_id, req.word_id)
     stats = await get_learning_stats(user_id)
     return {"status": "ok", "stats": stats}
 

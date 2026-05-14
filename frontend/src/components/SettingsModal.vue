@@ -51,6 +51,15 @@ const llmKey = ref('')
 const llmModel = ref('')
 const llmSaved = ref(false)
 
+// Word list page
+const wlBookId = ref(0)
+const wlBookName = ref('')
+const wlWords = ref([])
+const wlSearch = ref('')
+const wlDetailWord = ref(null)
+const wlShowDetail = ref(false)
+const wlLlmOutput = ref('')
+
 const props = defineProps({ modelValue: Boolean })
 const emit = defineEmits(['update:modelValue'])
 
@@ -68,6 +77,7 @@ const pageTitles = {
   'user-info': '用户信息',
   'learning-settings': '学习设置',
   'word-books': '单词本',
+  'word-list': '单词列表',
   'llm-settings': 'LLM 配置',
 }
 
@@ -173,11 +183,78 @@ async function saveLearningSettings() {
 }
 
 async function toggleBook(book) {
-  if (book.is_active) {
-    await wordBooks.deactivateBook(book.id)
-  } else {
-    await wordBooks.activateBook(book.id)
+  if (book.is_active) return
+  await wordBooks.activateBook(book.id)
+}
+
+async function openWordList(book) {
+  wlBookId.value = book.id
+  wlBookName.value = book.name
+  wlSearch.value = ''
+  wlDetailWord.value = null
+  wlShowDetail.value = false
+  pushPage('word-list')
+  const data = await api(`words/all-by-book?word_book_id=${book.id}`)
+  wlWords.value = data.words || []
+}
+
+const wlFiltered = computed(() => {
+  const q = wlSearch.value.trim().toLowerCase()
+  if (!q) return wlWords.value
+  return wlWords.value.filter(w =>
+    w.word.toLowerCase().includes(q) ||
+    (w.meaning_cn && w.meaning_cn.toLowerCase().includes(q))
+  )
+})
+
+const wlGrouped = computed(() => {
+  const list = wlFiltered.value
+  const groups = []
+  let currentLetter = ''
+  let currentGroup = null
+  for (const w of list) {
+    const letter = w.word[0]?.toUpperCase() || '#'
+    if (letter !== currentLetter) {
+      currentLetter = letter
+      currentGroup = { letter, words: [] }
+      groups.push(currentGroup)
+    }
+    currentGroup.words.push(w)
   }
+  return groups
+})
+
+const wlLetters = computed(() => wlGrouped.value.map(g => g.letter))
+
+function wlScrollTo(letter) {
+  const el = document.getElementById('wl-letter-' + letter)
+  if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+}
+
+async function wlShowWordDetail(id) {
+  const word = await api('words/' + id)
+  wlDetailWord.value = word
+  wlLlmOutput.value = ''
+  wlShowDetail.value = true
+}
+
+async function wlLLMAction(id, action) {
+  wlLlmOutput.value = '<div style="color:var(--text-secondary);text-align:center;padding:8px">加载中...</div>'
+  try {
+    const result = await api(`llm/quick-actions/${id}?action=${action}`, { method: 'POST' })
+    if (!result.ok) {
+      wlLlmOutput.value = `<div style="color:var(--danger)">${result.error || '请求失败'}</div>`
+      return
+    }
+    wlLlmOutput.value = `<pre style="white-space:pre-wrap;font-size:13px;line-height:1.6;color:var(--text);background:var(--bg);padding:12px;border-radius:8px;overflow-x:auto">${JSON.stringify(result.data, null, 2)}</pre>`
+  } catch (e) {
+    wlLlmOutput.value = `<div style="color:var(--danger)">${e.message}</div>`
+  }
+}
+
+function playAudio(url) {
+  if (!url) return
+  new Audio(url).play().catch(() => {})
 }
 
 async function saveLLMSettings() {
@@ -325,7 +402,7 @@ function closeOnOverlay(e) {
             <div class="s-page-scroll">
               <div class="s-book-list">
                 <div v-for="book in wordBooks.allBooks" :key="book.id" class="s-book" :class="{ on: book.is_active }">
-                  <div class="s-book-left">
+                  <div class="s-book-left" @click="openWordList(book)">
                     <span class="s-book-emoji">{{ book.icon }}</span>
                     <div class="s-book-body">
                       <div class="s-book-name">{{ book.name }}</div>
@@ -333,10 +410,70 @@ function closeOnOverlay(e) {
                       <div class="s-book-count">{{ book.word_count }} 个单词</div>
                     </div>
                   </div>
-                  <button class="s-book-toggle" :class="{ on: book.is_active }" @click="toggleBook(book)">
-                    {{ book.is_active ? '已激活' : '激活' }}
+                  <button class="s-book-toggle" :class="{ on: book.is_active }" @click.stop="toggleBook(book)">
+                    {{ book.is_active ? '使用中' : '切换' }}
                   </button>
                 </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- WORD LIST page -->
+          <div v-else-if="currentPage === 'word-list'" key="word-list" class="s-page">
+            <div class="s-page-scroll wl-page">
+              <input v-model="wlSearch" placeholder="搜索单词或释义..." class="wl-search">
+              <div class="wl-body">
+                <div class="wl-list">
+                  <div v-for="group in wlGrouped" :key="group.letter" class="wl-group">
+                    <div :id="'wl-letter-' + group.letter" class="wl-letter-header">{{ group.letter }}</div>
+                    <div v-for="w in group.words" :key="w.id" class="wl-word-item" @click="wlShowWordDetail(w.id)">
+                      <span class="wl-word">{{ w.word }}</span>
+                      <span class="wl-meaning">{{ (w.meanings && w.meanings[0]?.meaning_cn) || w.meaning_cn }}</span>
+                    </div>
+                  </div>
+                  <div v-if="wlGrouped.length === 0" class="wl-empty">没有找到匹配的单词</div>
+                </div>
+                <div class="wl-alpha-bar" v-if="wlLetters.length > 0">
+                  <span v-for="l in wlLetters" :key="l" class="wl-alpha-item" @click="wlScrollTo(l)">{{ l }}</span>
+                </div>
+              </div>
+            </div>
+            <!-- Word detail popup -->
+            <div v-if="wlShowDetail && wlDetailWord" class="wl-detail-overlay" @click.self="wlShowDetail = false">
+              <div class="wl-detail-card">
+                <button class="wl-detail-close" @click="wlShowDetail = false">&times;</button>
+                <div class="wl-detail-word">{{ wlDetailWord.word }}</div>
+                <div class="wl-detail-phonetics">
+                  <span v-if="wlDetailWord.phonetic_uk" class="wl-phonetic">🇬🇧 {{ wlDetailWord.phonetic_uk }}<button v-if="wlDetailWord.audio_uk" class="card-play-btn mini" @click="playAudio(wlDetailWord.audio_uk)"><span class="play-icon">&#9654;</span></button></span>
+                  <span v-if="wlDetailWord.phonetic_us" class="wl-phonetic">🇺🇸 {{ wlDetailWord.phonetic_us }}<button v-if="wlDetailWord.audio_us" class="card-play-btn mini" @click="playAudio(wlDetailWord.audio_us)"><span class="play-icon">&#9654;</span></button></span>
+                  <span v-if="!wlDetailWord.phonetic_uk && !wlDetailWord.phonetic_us && wlDetailWord.phonetic" class="wl-phonetic">{{ wlDetailWord.phonetic }}</span>
+                </div>
+                <div class="wl-detail-meanings">
+                  <div v-for="(m, i) in (wlDetailWord.meanings || [])" :key="i" class="wl-detail-m">
+                    <span class="card-pos">{{ m.pos }}</span>
+                    <span class="wl-detail-m-text">{{ m.meaning_cn }}</span>
+                  </div>
+                  <div v-if="!wlDetailWord.meanings?.length && wlDetailWord.meaning_cn" class="wl-detail-m">
+                    <span class="card-pos">{{ wlDetailWord.pos }}</span>
+                    <span class="wl-detail-m-text">{{ wlDetailWord.meaning_cn }}</span>
+                  </div>
+                </div>
+                <div class="wl-detail-forms" v-if="wlDetailWord.plural || wlDetailWord.past_tense || wlDetailWord.past_participle || wlDetailWord.present_participle || wlDetailWord.comparative || wlDetailWord.superlative || wlDetailWord.third_person">
+                  <span v-if="wlDetailWord.plural" class="card-form-tag">复数: {{ wlDetailWord.plural }}</span>
+                  <span v-if="wlDetailWord.past_tense" class="card-form-tag">过去式: {{ wlDetailWord.past_tense }}</span>
+                  <span v-if="wlDetailWord.past_participle" class="card-form-tag">过去分词: {{ wlDetailWord.past_participle }}</span>
+                  <span v-if="wlDetailWord.present_participle" class="card-form-tag">现在分词: {{ wlDetailWord.present_participle }}</span>
+                  <span v-if="wlDetailWord.comparative" class="card-form-tag">比较级: {{ wlDetailWord.comparative }}</span>
+                  <span v-if="wlDetailWord.superlative" class="card-form-tag">最高级: {{ wlDetailWord.superlative }}</span>
+                  <span v-if="wlDetailWord.third_person" class="card-form-tag">三单: {{ wlDetailWord.third_person }}</span>
+                </div>
+                <div v-if="wlDetailWord.example_en" class="wl-detail-example">{{ wlDetailWord.example_en }}<br>{{ wlDetailWord.example_cn }}</div>
+                <div class="wl-detail-actions">
+                  <button class="s-btn-sm" @click="wlLLMAction(wlDetailWord.id, 'examples')">生成例句</button>
+                  <button class="s-btn-sm" @click="wlLLMAction(wlDetailWord.id, 'explain')">详细解释</button>
+                  <button class="s-btn-sm" @click="wlLLMAction(wlDetailWord.id, 'quiz')">小测验</button>
+                </div>
+                <div v-html="wlLlmOutput" style="margin-top:12px"></div>
               </div>
             </div>
           </div>
@@ -757,20 +894,219 @@ function closeOnOverlay(e) {
   border-radius: 20px;
   font-size: 13px;
   font-weight: 600;
-  border: 1.5px solid var(--border);
+  border: 1.5px solid var(--primary);
   background: transparent;
-  color: var(--text-secondary);
+  color: var(--primary);
   cursor: pointer;
   transition: all 0.25s;
   white-space: nowrap;
   flex-shrink: 0;
 }
 
+.s-book-toggle:hover { background: #eef2ff; }
+
 .s-book-toggle.on {
   background: var(--success);
   color: white;
   border-color: var(--success);
-  box-shadow: 0 2px 8px rgba(16,185,129,0.3);
+  cursor: default;
+}
+
+.s-book-left { cursor: pointer; }
+
+/* ==================== Word List ==================== */
+.wl-page { display: flex; flex-direction: column; }
+
+.wl-search {
+  width: 100%;
+  padding: 10px 14px;
+  border: 1.5px solid var(--border);
+  border-radius: 10px;
+  font-size: 14px;
+  outline: none;
+  background: var(--surface);
+  color: var(--text);
+  margin-bottom: 12px;
+  box-sizing: border-box;
+}
+
+.wl-search:focus { border-color: var(--primary); }
+
+.wl-body { display: flex; gap: 0; flex: 1; min-height: 0; }
+
+.wl-list { flex: 1; overflow-y: auto; min-width: 0; }
+
+.wl-group { margin-bottom: 4px; }
+
+.wl-letter-header {
+  position: sticky;
+  top: 0;
+  background: var(--bg);
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--primary);
+  padding: 6px 0 4px;
+  z-index: 1;
+}
+
+.wl-word-item {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 9px 4px;
+  border-bottom: 1px solid #f1f5f9;
+  cursor: pointer;
+  transition: background 0.12s;
+}
+
+.wl-word-item:active { background: #f8fafc; }
+
+.wl-word {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+  flex-shrink: 0;
+  min-width: 80px;
+}
+
+.wl-meaning {
+  font-size: 13px;
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wl-empty {
+  text-align: center;
+  padding: 32px;
+  color: var(--text-secondary);
+  font-size: 14px;
+}
+
+/* Alphabet bar */
+.wl-alpha-bar {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 4px 2px;
+  gap: 0;
+  flex-shrink: 0;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.wl-alpha-item {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--primary);
+  padding: 1px 5px;
+  cursor: pointer;
+  line-height: 1.3;
+  border-radius: 4px;
+  transition: background 0.15s;
+}
+
+.wl-alpha-item:active { background: #eef2ff; }
+
+/* Word detail overlay */
+.wl-detail-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.35);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 20;
+  padding: 20px;
+}
+
+.wl-detail-card {
+  background: var(--surface);
+  border-radius: 16px;
+  padding: 24px;
+  max-width: 380px;
+  width: 100%;
+  max-height: 80vh;
+  overflow-y: auto;
+  position: relative;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.15);
+}
+
+.wl-detail-close {
+  position: absolute;
+  top: 12px;
+  right: 14px;
+  background: none;
+  border: none;
+  font-size: 24px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  line-height: 1;
+  padding: 4px;
+}
+
+.wl-detail-word {
+  font-size: 28px;
+  font-weight: 700;
+  color: var(--text);
+  margin-bottom: 8px;
+}
+
+.wl-detail-phonetics {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+
+.wl-phonetic {
+  color: #64748b;
+  font-size: 14px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.wl-detail-meanings {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+.wl-detail-m {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.wl-detail-m-text {
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--text);
+}
+
+.wl-detail-forms {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+
+.wl-detail-example {
+  color: #64748b;
+  font-size: 14px;
+  line-height: 1.6;
+  margin-top: 8px;
+}
+
+.wl-detail-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 16px;
 }
 
 /* ==================== Transitions ==================== */

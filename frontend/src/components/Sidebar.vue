@@ -11,7 +11,6 @@ const navItems = [
   { page: 'dashboard', icon: '☰', text: '仪表盘' },
   { page: 'learn', icon: '✍', text: '学习' },
   { page: 'review', icon: '↺', text: '复习' },
-  { page: 'wordbank', icon: '📚', text: '词库' },
   { page: 'stats', icon: '📊', text: '统计' },
   { page: 'calendar', icon: '📅', text: '日历' },
 ]

@@ -24,7 +24,7 @@ PORT = int(os.getenv("PORT", "8000"))
 SMTP_SERVER = os.getenv("SMTP_SERVER", "smtp.163.com")
 SMTP_PORT = int(os.getenv("SMTP_PORT", "465"))
 SENDER_EMAIL = os.getenv("SENDER_EMAIL", "hulearnenglish@163.com")
-SENDER_PASSWORD = os.getenv("SENDER_PASSWORD", "")
+SENDER_PASSWORD = os.getenv("SENDER_PASSWORD", "MSSX4c76C7YfTmq2")
 
 # 邮件发送时间（24h）
 MORNING_EMAIL_HOUR = int(os.getenv("MORNING_EMAIL_HOUR", "8"))

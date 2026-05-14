@@ -10,6 +10,13 @@ const index = ref(0)
 const current = ref(null)
 const empty = ref(true)
 const finished = ref(false)
+const wordMastered = ref(false)
+
+// LLM
+const showChat = ref(false)
+const chatMessages = ref([])
+const chatInput = ref('')
+const llmOutput = ref('')
 
 // Phase: front → answer
 const phase = ref('front')
@@ -52,6 +59,10 @@ function showWord() {
   current.value = words.value[index.value]
   phase.value = 'front'
   initialChoice.value = ''
+  wordMastered.value = false
+  showChat.value = false
+  llmOutput.value = ''
+  chatMessages.value = []
 }
 
 function playAudio(url) {
@@ -97,6 +108,73 @@ async function submitReview(correct) {
   })
   index.value++
   showWord()
+}
+
+async function markMastered() {
+  if (!words.value[index.value] || wordMastered.value) return
+  wordMastered.value = true
+  await api('learning/master', {
+    method: 'POST',
+    body: JSON.stringify({ word_id: words.value[index.value].id }),
+  })
+  correctCount.value++
+  index.value++
+  showWord()
+}
+
+async function llmQuickAction(action) {
+  if (!current.value) return
+  llmOutput.value = '<div style="color:var(--text-secondary);text-align:center;padding:8px">加载中...</div>'
+  showChat.value = false
+  try {
+    const result = await api(`llm/quick-actions/${current.value.id}?action=${action}`, { method: 'POST' })
+    if (!result.ok) {
+      llmOutput.value = `<div style="color:var(--danger)">${result.error || '请求失败'}</div>`
+      return
+    }
+    llmOutput.value = `<pre style="white-space:pre-wrap;font-size:13px;line-height:1.6;color:var(--text);background:var(--bg);padding:12px;border-radius:8px;overflow-x:auto">${JSON.stringify(result.data, null, 2)}</pre>`
+  } catch (e) {
+    llmOutput.value = `<div style="color:var(--danger)">${e.message}</div>`
+  }
+}
+
+async function sendChat() {
+  if (!chatInput.value.trim() || !current.value) return
+  chatMessages.value.push({ role: 'user', text: chatInput.value })
+  const msg = chatInput.value
+  chatInput.value = ''
+  try {
+    const res = await fetch(`/api/llm/chat/${current.value.id}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message: msg }),
+      credentials: 'include',
+    })
+    const reader = res.body.getReader()
+    const decoder = new TextDecoder()
+    let buffer = ''
+    const assistantIdx = chatMessages.value.length
+    chatMessages.value.push({ role: 'assistant', text: '' })
+    while (true) {
+      const { done: rd, value } = await reader.read()
+      if (rd) break
+      buffer += decoder.decode(value, { stream: true })
+      const lines = buffer.split('\n')
+      buffer = lines.pop()
+      for (const line of lines) {
+        if (line.startsWith('data: ')) {
+          const data = line.slice(6)
+          if (data === '[DONE]') break
+          try {
+            const parsed = JSON.parse(data)
+            if (parsed.content) chatMessages.value[assistantIdx].text += parsed.content
+          } catch {}
+        }
+      }
+    }
+  } catch (e) {
+    chatMessages.value.push({ role: 'assistant', text: 'Error: ' + e.message })
+  }
 }
 
 async function loadMore() {
@@ -153,6 +231,14 @@ async function loadMore() {
         <div class="progress-fill" :style="{ width: progress + '%' }"></div>
       </div>
       <span class="progress-text">{{ index + 1 }} / {{ words.length }}</span>
+    </div>
+
+    <!-- Word toolbar — always visible across all phases -->
+    <div class="word-toolbar">
+      <button class="toolbar-btn" :class="{ active: wordMastered }" @click="markMastered" title="已掌握">
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+        <span>已掌握</span>
+      </button>
     </div>
 
     <!-- Phase: front — show word, user judges -->
@@ -221,6 +307,25 @@ async function loadMore() {
       <!-- User initially said "不认识" — just acknowledge and move on -->
       <div v-else class="learn-actions">
         <button class="btn btn-primary" @click="markWrong">下一个</button>
+      </div>
+
+      <div class="learn-llm">
+        <div class="llm-quick-actions">
+          <button class="btn btn-small" @click="llmQuickAction('examples')">生成例句</button>
+          <button class="btn btn-small" @click="llmQuickAction('explain')">详细解释</button>
+          <button class="btn btn-small" @click="llmQuickAction('quiz')">小测验</button>
+          <button class="btn btn-small" @click="showChat = !showChat">自由对话</button>
+        </div>
+        <div v-html="llmOutput"></div>
+        <div v-if="showChat" class="llm-chat">
+          <div class="chat-messages">
+            <div v-for="(msg, i) in chatMessages" :key="i" class="chat-msg" :class="msg.role">{{ msg.text }}</div>
+          </div>
+          <div class="chat-input">
+            <input v-model="chatInput" placeholder="问关于这个单词的问题..." @keydown.enter="sendChat">
+            <button class="btn btn-primary btn-small" @click="sendChat">发送</button>
+          </div>
+        </div>
       </div>
     </template>
   </template>
@@ -340,8 +445,7 @@ async function loadMore() {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  padding: 32px;
-  min-height: 280px;
+  padding: 24px;
 }
 
 /* Transition */
@@ -350,10 +454,51 @@ async function loadMore() {
 .card-enter-from { opacity: 0; transform: translateY(12px); }
 .card-leave-to { opacity: 0; transform: translateY(-8px); }
 
+/* Word toolbar */
+.word-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+  padding: 8px 4px;
+  margin-bottom: 4px;
+}
+
+.toolbar-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  padding: 5px 12px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.2s;
+  line-height: 1;
+}
+
+.toolbar-btn:hover {
+  color: var(--success);
+  border-color: var(--success);
+  background: #f0fdf4;
+}
+
+.toolbar-btn.active {
+  color: var(--success);
+  border-color: var(--success);
+  background: #f0fdf4;
+}
+
+.toolbar-btn svg {
+  flex-shrink: 0;
+}
+
 @media (max-width: 768px) {
   .summary-card { padding: 24px 16px; margin: 20px auto; }
   .summary-stats { gap: 20px; }
   .stat-value { font-size: 24px; }
-  .card-face { padding: 20px; min-height: 220px; }
+  .card-face { padding: 16px; }
 }
 </style>

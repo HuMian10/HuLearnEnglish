@@ -14,6 +14,7 @@ const done = ref(false)
 
 // Phase: front → recognize_quiz → show_answer → practice_quiz
 const phase = ref('front')
+const wordMastered = ref(false)
 // After show_answer, which action to show
 const answerAction = ref('') // 'mark_known' | 'practice'
 const showChat = ref(false)
@@ -96,6 +97,7 @@ function showWord() {
   current.value = words.value[index.value]
   phase.value = 'front'
   answerAction.value = ''
+  wordMastered.value = false
   showChat.value = false
   llmOutput.value = ''
   chatMessages.value = []
@@ -275,7 +277,8 @@ function onQuizNext() {
   } else if (phase.value === 'practice_quiz') {
     const hasMore = nextInQueue()
     if (!hasMore) {
-      markWord(false)
+      answerAction.value = 'mark_known'
+      phase.value = 'show_answer'
     }
   }
 }
@@ -285,6 +288,17 @@ async function markWord(correct) {
   await api('learning/review', {
     method: 'POST',
     body: JSON.stringify({ word_id: current.value.id, correct }),
+  })
+  index.value++
+  showWord()
+}
+
+async function markMastered() {
+  if (!current.value || wordMastered.value) return
+  wordMastered.value = true
+  await api('learning/master', {
+    method: 'POST',
+    body: JSON.stringify({ word_id: current.value.id }),
   })
   index.value++
   showWord()
@@ -457,6 +471,14 @@ async function sendChat() {
       <span>{{ index + 1 }}</span> / <span>{{ words.length }}</span>
     </div>
 
+    <!-- Word toolbar — always visible across all phases -->
+    <div class="word-toolbar">
+      <button class="toolbar-btn" :class="{ active: wordMastered }" @click="markMastered" title="已掌握">
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+        <span>熟</span>
+      </button>
+    </div>
+
     <!-- Phase: front — word card front + 认识/不认识 -->
     <template v-if="phase === 'front'">
       <div class="word-card-container">
@@ -474,25 +496,6 @@ async function sendChat() {
       <div class="learn-actions">
         <button class="btn btn-danger" @click="onDontKnow">✗ 不认识</button>
         <button class="btn btn-success" @click="onRecognize">✓ 认识</button>
-      </div>
-
-      <div class="learn-llm">
-        <div class="llm-quick-actions">
-          <button class="btn btn-small" @click="llmQuickAction('examples')">生成例句</button>
-          <button class="btn btn-small" @click="llmQuickAction('explain')">详细解释</button>
-          <button class="btn btn-small" @click="llmQuickAction('quiz')">小测验</button>
-          <button class="btn btn-small" @click="showChat = !showChat">自由对话</button>
-        </div>
-        <div v-html="llmOutput"></div>
-        <div v-if="showChat" class="llm-chat">
-          <div class="chat-messages">
-            <div v-for="(msg, i) in chatMessages" :key="i" class="chat-msg" :class="msg.role">{{ msg.text }}</div>
-          </div>
-          <div class="chat-input">
-            <input v-model="chatInput" placeholder="问关于这个单词的问题..." @keydown.enter="sendChat">
-            <button class="btn btn-primary btn-small" @click="sendChat">发送</button>
-          </div>
-        </div>
       </div>
     </template>
 
@@ -567,7 +570,9 @@ async function sendChat() {
         <div v-if="answered" class="quiz-result" :class="{ correct: answerCorrect, wrong: !answerCorrect }">
           {{ answerCorrect ? '回答正确! ✓' : '回答错误 ✗' }}
         </div>
-        <button v-if="answered" class="btn btn-primary quiz-next-btn" @click="onQuizNext">{{ isLastInQueue ? '下一个单词' : '下一题' }}</button>
+        <div v-if="answered" class="quiz-actions-row">
+          <button class="btn btn-primary quiz-next-btn" @click="onQuizNext">{{ isLastInQueue ? '下一个单词' : '下一题' }}</button>
+        </div>
       </div>
     </template>
 
@@ -609,6 +614,24 @@ async function sendChat() {
         <button v-if="answerAction === 'mark_known'" class="btn btn-success" @click="markWord(true)">✓ 认识，下一个</button>
         <button v-if="answerAction === 'mark_unknown'" class="btn btn-primary" @click="markWord(false)">下一个</button>
         <button v-if="answerAction === 'practice'" class="btn btn-primary" @click="startPractice">开始练习</button>
+      </div>
+      <div class="learn-llm">
+        <div class="llm-quick-actions">
+          <button class="btn btn-small" @click="llmQuickAction('examples')">生成例句</button>
+          <button class="btn btn-small" @click="llmQuickAction('explain')">详细解释</button>
+          <button class="btn btn-small" @click="llmQuickAction('quiz')">小测验</button>
+          <button class="btn btn-small" @click="showChat = !showChat">自由对话</button>
+        </div>
+        <div v-html="llmOutput"></div>
+        <div v-if="showChat" class="llm-chat">
+          <div class="chat-messages">
+            <div v-for="(msg, i) in chatMessages" :key="i" class="chat-msg" :class="msg.role">{{ msg.text }}</div>
+          </div>
+          <div class="chat-input">
+            <input v-model="chatInput" placeholder="问关于这个单词的问题..." @keydown.enter="sendChat">
+            <button class="btn btn-primary btn-small" @click="sendChat">发送</button>
+          </div>
+        </div>
       </div>
     </template>
 
@@ -683,13 +706,56 @@ async function sendChat() {
         <div v-if="answered" class="quiz-result" :class="{ correct: answerCorrect, wrong: !answerCorrect }">
           {{ answerCorrect ? '回答正确! ✓' : '回答错误 ✗' }}
         </div>
-        <button v-if="answered" class="btn btn-primary quiz-next-btn" @click="onQuizNext">{{ isLastInQueue ? '下一个单词' : '下一题' }}</button>
+        <div v-if="answered" class="quiz-actions-row">
+          <button class="btn btn-primary quiz-next-btn" @click="onQuizNext">{{ isLastInQueue ? '下一个单词' : '下一题' }}</button>
+        </div>
       </div>
     </template>
   </template>
 </template>
 
 <style scoped>
+/* Word toolbar — persistent across all phases */
+.word-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+  padding: 8px 4px;
+  margin-bottom: 4px;
+}
+
+.toolbar-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  padding: 5px 12px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.2s;
+  line-height: 1;
+}
+
+.toolbar-btn:hover {
+  color: var(--success);
+  border-color: var(--success);
+  background: #f0fdf4;
+}
+
+.toolbar-btn.active {
+  color: var(--success);
+  border-color: var(--success);
+  background: #f0fdf4;
+}
+
+.toolbar-btn svg {
+  flex-shrink: 0;
+}
+
 .card-face {
   background: var(--surface);
   border-radius: var(--radius);
@@ -698,8 +764,7 @@ async function sendChat() {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  padding: 32px;
-  min-height: 280px;
+  padding: 24px;
 }
 
 .quiz-card {
@@ -846,8 +911,15 @@ async function sendChat() {
 .quiz-result.correct { color: var(--success); }
 .quiz-result.wrong { color: var(--danger); }
 
-.quiz-next-btn {
+.quiz-actions-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
   margin-top: 16px;
+}
+
+.quiz-next-btn {
   padding: 10px 32px;
   font-size: 15px;
   border-radius: 10px;
@@ -905,6 +977,6 @@ async function sendChat() {
   .quiz-prompt-meaning { font-size: 18px; }
   .quiz-option-btn { padding: 10px 14px; font-size: 14px; }
   .quiz-spell-input { padding: 10px 14px; font-size: 14px; }
-  .card-face { padding: 20px; min-height: 220px; }
+  .card-face { padding: 16px; }
 }
 </style>

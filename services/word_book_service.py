@@ -29,14 +29,31 @@ async def get_active_book_ids(user_id: int) -> list[int]:
 
 
 async def activate_book(user_id: int, book_id: int):
+    """Activate a word book, deactivating all others (only one active at a time)."""
     db = await get_db()
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    # Deactivate all current books
+    await db.execute(
+        "UPDATE user_word_books SET is_active = 0 WHERE user_id = ?",
+        (user_id,)
+    )
+
+    # Activate the target book
     await db.execute(
         """INSERT INTO user_word_books (user_id, word_book_id, is_active, activated_at)
            VALUES (?, ?, 1, ?)
            ON CONFLICT(user_id, word_book_id) DO UPDATE SET is_active=1, activated_at=?""",
         (user_id, book_id, now, now)
     )
+
+    # Clear today's plan so it regenerates with the new book's words
+    today = datetime.now().strftime("%Y-%m-%d")
+    await db.execute(
+        "DELETE FROM daily_plan WHERE user_id = ? AND date = ?",
+        (user_id, today)
+    )
+
     await db.commit()
 
 

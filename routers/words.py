@@ -1,6 +1,6 @@
 """Words API router."""
 from fastapi import APIRouter, Query
-from services.word_service import get_words, get_word, get_categories, get_distractors
+from services.word_service import get_words, get_word, get_categories, get_distractors, get_all_words_by_book
 
 router = APIRouter()
 
@@ -14,6 +14,12 @@ async def list_words(
     word_book_id: int = Query(0, description="Filter by word book id"),
 ):
     return await get_words(category, search, page, page_size, word_book_id)
+
+
+@router.get("/all-by-book")
+async def all_words_by_book(word_book_id: int = Query(..., description="Word book id")):
+    words = await get_all_words_by_book(word_book_id)
+    return {"words": words}
 
 
 @router.get("/categories")

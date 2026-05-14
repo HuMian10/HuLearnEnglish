@@ -7,7 +7,6 @@ const navItems = [
   { page: 'dashboard', icon: '☰', text: '首页' },
   { page: 'learn', icon: '✍', text: '学习' },
   { page: 'review', icon: '↺', text: '复习' },
-  { page: 'wordbank', icon: '📚', text: '词库' },
   { page: 'calendar', icon: '📅', text: '日历' },
 ]
 </script>
