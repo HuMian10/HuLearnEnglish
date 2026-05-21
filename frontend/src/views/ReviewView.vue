@@ -12,6 +12,9 @@ const empty = ref(true)
 const finished = ref(false)
 const wordMastered = ref(false)
 
+// Favorites
+const isFav = ref(false)
+
 // LLM
 const showChat = ref(false)
 const chatMessages = ref([])
@@ -63,6 +66,7 @@ function showWord() {
   showChat.value = false
   llmOutput.value = ''
   chatMessages.value = []
+  checkFavorite()
 }
 
 function playAudio(url) {
@@ -188,6 +192,29 @@ async function loadMore() {
     showWord()
   }
 }
+
+async function checkFavorite() {
+  if (!current.value) return
+  try {
+    const data = await api(`learning/favorites/check/${current.value.id}`)
+    isFav.value = data.is_favorite
+  } catch {
+    isFav.value = false
+  }
+}
+
+async function toggleFavorite() {
+  if (!current.value) return
+  try {
+    if (isFav.value) {
+      await api(`learning/favorites/${current.value.id}`, { method: 'DELETE' })
+      isFav.value = false
+    } else {
+      await api(`learning/favorites/${current.value.id}`, { method: 'POST' })
+      isFav.value = true
+    }
+  } catch {}
+}
 </script>
 
 <template>
@@ -235,6 +262,10 @@ async function loadMore() {
 
     <!-- Word toolbar — always visible across all phases -->
     <div class="word-toolbar">
+      <button class="toolbar-btn" :class="{ active: isFav }" @click="toggleFavorite" title="收藏">
+        <span style="font-size:14px">{{ isFav ? '⭐' : '☆' }}</span>
+        <span>{{ isFav ? '已收藏' : '收藏' }}</span>
+      </button>
       <button class="toolbar-btn" :class="{ active: wordMastered }" @click="markMastered" title="已掌握">
         <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
         <span>已掌握</span>
@@ -350,7 +381,7 @@ async function loadMore() {
 
 .progress-fill {
   height: 100%;
-  background: var(--primary);
+  background: var(--gradient-primary);
   border-radius: 3px;
   transition: width 0.3s ease;
 }
@@ -361,10 +392,11 @@ async function loadMore() {
   white-space: nowrap;
   min-width: 48px;
   text-align: right;
+  font-weight: 600;
 }
 
 /* Empty state */
-.empty-icon { font-size: 48px; margin-bottom: 8px; }
+.empty-icon { font-size: 56px; margin-bottom: 8px; }
 .empty-hint { font-size: 13px; color: var(--text-secondary); margin-top: 4px; }
 
 /* Summary card */
@@ -372,16 +404,19 @@ async function loadMore() {
   max-width: 400px;
   margin: 40px auto;
   background: var(--surface);
-  border-radius: var(--radius);
+  border-radius: var(--radius-xl);
   padding: 32px;
-  box-shadow: var(--shadow);
+  box-shadow: var(--shadow-md);
   text-align: center;
 }
 
 .summary-title {
   font-size: 24px;
-  font-weight: 700;
-  color: var(--text);
+  font-weight: 800;
+  background: var(--gradient-primary);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
   margin-bottom: 24px;
 }
 
@@ -400,14 +435,16 @@ async function loadMore() {
 
 .stat-value {
   font-size: 28px;
-  font-weight: 700;
+  font-weight: 800;
   color: var(--text);
+  letter-spacing: -0.5px;
 }
 
 .stat-label {
   font-size: 13px;
   color: var(--text-secondary);
   margin-top: 2px;
+  font-weight: 500;
 }
 
 .summary-stat.correct .stat-value { color: var(--success); }
@@ -423,7 +460,7 @@ async function loadMore() {
 
 .summary-bar-fill {
   height: 100%;
-  background: var(--success);
+  background: var(--gradient-success);
   border-radius: 4px;
   transition: width 0.5s ease;
 }
@@ -432,6 +469,7 @@ async function loadMore() {
   font-size: 14px;
   color: var(--text-secondary);
   margin-bottom: 20px;
+  font-weight: 600;
 }
 
 .summary-card .btn { width: 100%; justify-content: center; }
@@ -439,13 +477,13 @@ async function loadMore() {
 /* Card styles */
 .card-face {
   background: var(--surface);
-  border-radius: var(--radius);
-  box-shadow: var(--shadow);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-md);
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  padding: 24px;
+  padding: 28px;
 }
 
 /* Transition */
@@ -459,7 +497,7 @@ async function loadMore() {
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  gap: 4px;
+  gap: 6px;
   padding: 8px 4px;
   margin-bottom: 4px;
 }
@@ -467,12 +505,13 @@ async function loadMore() {
 .toolbar-btn {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: 5px;
   background: none;
-  border: 1px solid var(--border);
+  border: 1.5px solid var(--border);
   border-radius: 20px;
-  padding: 5px 12px;
+  padding: 6px 14px;
   font-size: 12px;
+  font-weight: 600;
   color: var(--text-secondary);
   cursor: pointer;
   transition: all 0.2s;
@@ -482,18 +521,16 @@ async function loadMore() {
 .toolbar-btn:hover {
   color: var(--success);
   border-color: var(--success);
-  background: #f0fdf4;
+  background: rgba(16,185,129,0.06);
 }
 
 .toolbar-btn.active {
   color: var(--success);
   border-color: var(--success);
-  background: #f0fdf4;
+  background: rgba(16,185,129,0.08);
 }
 
-.toolbar-btn svg {
-  flex-shrink: 0;
-}
+.toolbar-btn svg { flex-shrink: 0; }
 
 @media (max-width: 768px) {
   .summary-card { padding: 24px 16px; margin: 20px auto; }

@@ -49,7 +49,7 @@ async def _email_scheduler():
 @asynccontextmanager
 async def lifespan(app):
     # Startup
-    # await init_database(DB_PATH)
+    await init_database(DB_PATH)
 
     # Start email scheduler only if password is configured
     email_task = None
@@ -64,6 +64,8 @@ async def lifespan(app):
     # Shutdown
     if email_task:
         email_task.cancel()
+    from models.database import close_db
+    await close_db()
 
 
 app = FastAPI(title="English Lesson", description="英语日常词汇学习", lifespan=lifespan)
@@ -95,7 +97,7 @@ async def test_morning_email(user_id: int = Depends(auth.get_current_user_id)):
     html = await _build_plan_html(user_id, user["username"])
     if not html:
         return {"ok": False, "error": "今日没有学习计划"}
-    ok = _send_email(user["email"], "☀️ 今日学习计划", html)
+    ok = await _send_email(user["email"], "☀️ 今日学习计划", html)
     return {"ok": ok}
 
 
@@ -110,5 +112,5 @@ async def test_evening_email(user_id: int = Depends(auth.get_current_user_id)):
     html = await _build_summary_html(user_id, user["username"])
     if not html:
         return {"ok": False, "error": "今日没有学习记录"}
-    ok = _send_email(user["email"], "🌙 今日学习总结", html)
+    ok = await _send_email(user["email"], "🌙 今日学习总结", html)
     return {"ok": ok}

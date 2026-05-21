@@ -15,6 +15,7 @@ const done = ref(false)
 // Phase: front → recognize_quiz → show_answer → practice_quiz
 const phase = ref('front')
 const wordMastered = ref(false)
+const isFav = ref(false)
 // After show_answer, which action to show
 const answerAction = ref('') // 'mark_known' | 'practice'
 const showChat = ref(false)
@@ -104,6 +105,7 @@ function showWord() {
   resetQuiz()
   distractors.value = []
   fetchDistractors()
+  checkFavorite()
 }
 
 function resetQuiz() {
@@ -125,6 +127,29 @@ async function fetchDistractors() {
   } catch {
     distractors.value = []
   }
+}
+
+async function checkFavorite() {
+  if (!current.value) return
+  try {
+    const data = await api(`learning/favorites/check/${current.value.id}`)
+    isFav.value = data.is_favorite
+  } catch {
+    isFav.value = false
+  }
+}
+
+async function toggleFavorite() {
+  if (!current.value) return
+  try {
+    if (isFav.value) {
+      await api(`learning/favorites/${current.value.id}`, { method: 'DELETE' })
+      isFav.value = false
+    } else {
+      await api(`learning/favorites/${current.value.id}`, { method: 'POST' })
+      isFav.value = true
+    }
+  } catch {}
 }
 
 function playAudio(url) {
@@ -473,6 +498,10 @@ async function sendChat() {
 
     <!-- Word toolbar — always visible across all phases -->
     <div class="word-toolbar">
+      <button class="toolbar-btn" :class="{ active: isFav }" @click="toggleFavorite" title="收藏">
+        <span style="font-size:14px">{{ isFav ? '⭐' : '☆' }}</span>
+        <span>{{ isFav ? '已收藏' : '收藏' }}</span>
+      </button>
       <button class="toolbar-btn" :class="{ active: wordMastered }" @click="markMastered" title="已掌握">
         <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
         <span>熟</span>
@@ -720,7 +749,7 @@ async function sendChat() {
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  gap: 4px;
+  gap: 6px;
   padding: 8px 4px;
   margin-bottom: 4px;
 }
@@ -728,12 +757,13 @@ async function sendChat() {
 .toolbar-btn {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: 5px;
   background: none;
-  border: 1px solid var(--border);
+  border: 1.5px solid var(--border);
   border-radius: 20px;
-  padding: 5px 12px;
+  padding: 6px 14px;
   font-size: 12px;
+  font-weight: 600;
   color: var(--text-secondary);
   cursor: pointer;
   transition: all 0.2s;
@@ -743,49 +773,48 @@ async function sendChat() {
 .toolbar-btn:hover {
   color: var(--success);
   border-color: var(--success);
-  background: #f0fdf4;
+  background: rgba(16,185,129,0.06);
 }
 
 .toolbar-btn.active {
   color: var(--success);
   border-color: var(--success);
-  background: #f0fdf4;
+  background: rgba(16,185,129,0.08);
 }
 
-.toolbar-btn svg {
-  flex-shrink: 0;
-}
+.toolbar-btn svg { flex-shrink: 0; }
 
 .card-face {
   background: var(--surface);
-  border-radius: var(--radius);
-  box-shadow: var(--shadow);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-md);
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  padding: 24px;
+  padding: 28px;
 }
 
 .quiz-card {
   max-width: 460px;
   margin: 0 auto;
   background: var(--surface);
-  border-radius: var(--radius);
+  border-radius: var(--radius-xl);
   padding: 28px 24px;
-  box-shadow: var(--shadow);
+  box-shadow: var(--shadow-md);
   text-align: center;
+  animation: fadeInUp 0.25s ease;
 }
 
 .quiz-card-badge {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 4px 14px;
+  padding: 5px 16px;
   border-radius: 20px;
   font-size: 12px;
-  font-weight: 600;
-  letter-spacing: 0.5px;
+  font-weight: 700;
+  letter-spacing: 0.3px;
   margin-bottom: 20px;
 }
 
@@ -796,19 +825,20 @@ async function sendChat() {
 }
 
 .quiz-card-badge.recognize {
-  background: #eef2ff;
+  background: rgba(99,102,241,0.08);
   color: var(--primary);
 }
 
 .quiz-card-badge.practice {
-  background: #fef3c7;
+  background: rgba(245,158,11,0.08);
   color: #92400e;
 }
 
 .quiz-prompt-word {
   font-size: 32px;
-  font-weight: 700;
+  font-weight: 800;
   color: var(--text);
+  letter-spacing: -0.5px;
 }
 
 .quiz-prompt-meaning {
@@ -833,6 +863,7 @@ async function sendChat() {
   color: var(--text-secondary);
   margin: 16px 0 12px;
   text-align: center;
+  font-weight: 500;
 }
 
 .quiz-options {
@@ -844,29 +875,30 @@ async function sendChat() {
 .quiz-option-btn {
   padding: 12px 16px;
   border: 1.5px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   font-size: 15px;
   cursor: pointer;
   transition: all 0.15s;
   background: var(--surface);
   text-align: left;
   color: var(--text);
+  font-weight: 500;
 }
 
 .quiz-option-btn:hover:not(.disabled) {
   border-color: var(--primary);
-  background: #eef2ff;
+  background: rgba(99,102,241,0.04);
 }
 
 .quiz-option-btn.correct {
   border-color: var(--success);
-  background: #ecfdf5;
+  background: rgba(16,185,129,0.06);
   color: #065f46;
 }
 
 .quiz-option-btn.wrong {
   border-color: var(--danger);
-  background: #fef2f2;
+  background: rgba(239,68,68,0.06);
   color: #991b1b;
 }
 
@@ -886,26 +918,28 @@ async function sendChat() {
   flex: 1;
   padding: 12px 16px;
   border: 1.5px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   font-size: 16px;
   outline: none;
   text-align: center;
+  transition: border-color 0.2s, box-shadow 0.2s;
 }
 
-.quiz-spell-input:focus { border-color: var(--primary); }
-.quiz-spell-input.correct { border-color: var(--success); background: #ecfdf5; }
-.quiz-spell-input.wrong { border-color: var(--danger); background: #fef2f2; }
+.quiz-spell-input:focus { border-color: var(--primary); box-shadow: 0 0 0 3px rgba(99,102,241,0.1); }
+.quiz-spell-input.correct { border-color: var(--success); background: rgba(16,185,129,0.06); }
+.quiz-spell-input.wrong { border-color: var(--danger); background: rgba(239,68,68,0.06); }
 
 .quiz-answer-reveal {
   font-size: 14px;
   color: var(--danger);
   margin-top: 8px;
+  font-weight: 600;
 }
 
 .quiz-result {
   margin-top: 16px;
   font-size: 15px;
-  font-weight: 600;
+  font-weight: 700;
 }
 
 .quiz-result.correct { color: var(--success); }
@@ -922,7 +956,7 @@ async function sendChat() {
 .quiz-next-btn {
   padding: 10px 32px;
   font-size: 15px;
-  border-radius: 10px;
+  border-radius: var(--radius);
 }
 
 .dictation-play-btn {
@@ -942,8 +976,10 @@ async function sendChat() {
 }
 
 .dictation-play-btn:hover:not(:disabled) {
-  background: var(--primary);
+  background: var(--gradient-primary);
   color: white;
+  border-color: transparent;
+  box-shadow: 0 4px 12px rgba(99,102,241,0.3);
 }
 
 .dictation-play-btn:disabled {
@@ -951,13 +987,9 @@ async function sendChat() {
   cursor: not-allowed;
 }
 
-.dictation-play-icon {
-  font-size: 18px;
-}
+.dictation-play-icon { font-size: 18px; }
 
-.dictation-hint-btn {
-  margin-bottom: 12px;
-}
+.dictation-hint-btn { margin-bottom: 12px; }
 
 .dictation-hint {
   display: flex;
@@ -967,8 +999,13 @@ async function sendChat() {
   color: var(--text-secondary);
   margin-bottom: 12px;
   padding: 8px 16px;
-  background: #f8fafc;
-  border-radius: 8px;
+  background: var(--bg);
+  border-radius: var(--radius-sm);
+}
+
+@keyframes fadeInUp {
+  from { opacity: 0; transform: translateY(12px); }
+  to { opacity: 1; transform: translateY(0); }
 }
 
 @media (max-width: 768px) {

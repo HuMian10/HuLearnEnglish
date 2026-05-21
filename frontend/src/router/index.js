@@ -7,8 +7,8 @@ const routes = [
   { path: '/dashboard', name: 'dashboard', component: () => import('../views/DashboardView.vue') },
   { path: '/learn', name: 'learn', component: () => import('../views/LearnView.vue') },
   { path: '/review', name: 'review', component: () => import('../views/ReviewView.vue') },
+  { path: '/word-bank', name: 'word-bank', component: () => import('../views/WordBankView.vue') },
   { path: '/stats', name: 'stats', component: () => import('../views/StatsView.vue') },
-  { path: '/calendar', name: 'calendar', component: () => import('../views/CalendarView.vue') },
 ]
 
 const router = createRouter({

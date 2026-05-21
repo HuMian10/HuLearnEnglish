@@ -274,6 +274,17 @@ async def submit_review(user_id: int, word_id: int, correct: bool):
 
     await db.commit()
 
+    # Track wrong words and update streak
+    from services.wrong_word_service import record_wrong_word, remove_wrong_word
+    from services.streak_service import update_streak
+    if not correct:
+        await record_wrong_word(user_id, word_id)
+    else:
+        # If answered correctly and word is now mastered, remove from wrong words
+        if progress and new_status == "mastered":
+            await remove_wrong_word(user_id, word_id)
+    await update_streak(user_id)
+
 
 async def mark_word_mastered(user_id: int, word_id: int):
     """Mark a word as mastered. It won't appear in learning or review anymore."""
@@ -319,10 +330,17 @@ async def mark_word_mastered(user_id: int, word_id: int):
 
     await db.commit()
 
+    # Remove from wrong words and update streak
+    from services.wrong_word_service import remove_wrong_word
+    from services.streak_service import update_streak
+    await remove_wrong_word(user_id, word_id)
+    await update_streak(user_id)
+
 
 async def get_learning_stats(user_id: int):
     """Get overall learning statistics for a user."""
     db = await get_db()
+    today = datetime.now().strftime("%Y-%m-%d")
 
     active_book_ids = await get_active_book_ids(user_id)
     if active_book_ids:
@@ -331,37 +349,20 @@ async def get_learning_stats(user_id: int):
             f"SELECT COUNT(DISTINCT word_id) FROM word_book_words WHERE word_book_id IN ({placeholders})",
             active_book_ids
         )).fetchone())[0]
-    else:
-        total_words = 0
 
-    if active_book_ids:
-        placeholders = ",".join("?" * len(active_book_ids))
-        new_count = (await (await db.execute(
-            f"""SELECT COUNT(DISTINCT lp.word_id) FROM learning_progress lp
+        # Single GROUP BY query instead of 3 separate queries
+        cursor = await db.execute(
+            f"""SELECT lp.status, COUNT(DISTINCT lp.word_id) as cnt FROM learning_progress lp
                JOIN word_book_words wbw ON lp.word_id = wbw.word_id
-               WHERE lp.user_id=? AND lp.status='new' AND wbw.word_book_id IN ({placeholders})""",
+               WHERE lp.user_id=? AND wbw.word_book_id IN ({placeholders})
+               GROUP BY lp.status""",
             [user_id] + active_book_ids
-        )).fetchone())[0]
-        learning_count = (await (await db.execute(
-            f"""SELECT COUNT(DISTINCT lp.word_id) FROM learning_progress lp
-               JOIN word_book_words wbw ON lp.word_id = wbw.word_id
-               WHERE lp.user_id=? AND lp.status='learning' AND wbw.word_book_id IN ({placeholders})""",
-            [user_id] + active_book_ids
-        )).fetchone())[0]
-        mastered_count = (await (await db.execute(
-            f"""SELECT COUNT(DISTINCT lp.word_id) FROM learning_progress lp
-               JOIN word_book_words wbw ON lp.word_id = wbw.word_id
-               WHERE lp.user_id=? AND lp.status='mastered' AND wbw.word_book_id IN ({placeholders})""",
-            [user_id] + active_book_ids
-        )).fetchone())[0]
-    else:
-        new_count = 0
-        learning_count = 0
-        mastered_count = 0
+        )
+        status_counts = {row[0]: row[1] for row in await cursor.fetchall()}
+        new_count = status_counts.get("new", 0)
+        learning_count = status_counts.get("learning", 0)
+        mastered_count = status_counts.get("mastered", 0)
 
-    today = datetime.now().strftime("%Y-%m-%d")
-    if active_book_ids:
-        placeholders = ",".join("?" * len(active_book_ids))
         due_review = (await (await db.execute(
             f"""SELECT COUNT(DISTINCT lp.word_id) FROM learning_progress lp
                JOIN word_book_words wbw ON lp.word_id = wbw.word_id
@@ -375,6 +376,10 @@ async def get_learning_stats(user_id: int):
             [user_id, today, today + "%"] + active_book_ids
         )).fetchone())[0]
     else:
+        total_words = 0
+        new_count = 0
+        learning_count = 0
+        mastered_count = 0
         due_review = 0
 
     cursor = await db.execute(
@@ -388,6 +393,13 @@ async def get_learning_stats(user_id: int):
         today_total = p["total"]
         today_completed = p["completed"]
 
+    # Get wrong words count and streak info
+    from services.wrong_word_service import get_wrong_words
+    from services.streak_service import get_streak
+    wrong_data = await get_wrong_words(user_id, page=1, page_size=1)
+    wrong_count = wrong_data["total"]
+    streak_info = await get_streak(user_id)
+
     return {
         "total_words": total_words,
         "new_count": new_count,
@@ -397,6 +409,9 @@ async def get_learning_stats(user_id: int):
         "today_total": today_total,
         "today_completed": today_completed,
         "unlearned": max(0, total_words - new_count - learning_count - mastered_count),
+        "wrong_count": wrong_count,
+        "streak_days": streak_info["streak_days"],
+        "best_streak": streak_info["best_streak"],
     }
 
 
@@ -415,17 +430,27 @@ async def get_plan_words(user_id: int):
     p = dict(plan)
     word_ids = json.loads(p["word_ids"])
     completed_ids = json.loads(p["completed_ids"])
+    completed_set = set(completed_ids)
+
+    # Batch query instead of N+1
+    if not word_ids:
+        return [], []
+
+    placeholders = ",".join("?" * len(word_ids))
+    cursor = await db.execute(
+        f"SELECT * FROM words WHERE id IN ({placeholders})", word_ids
+    )
+    rows = await cursor.fetchall()
+    word_map = {row["id"]: _parse_word(dict(row)) for row in rows}
 
     words = []
     remaining = []
     for wid in word_ids:
-        cursor = await db.execute("SELECT * FROM words WHERE id = ?", (wid,))
-        row = await cursor.fetchone()
-        if row:
-            w = _parse_word(dict(row))
-            w["completed"] = wid in completed_ids
+        w = word_map.get(wid)
+        if w:
+            w["completed"] = wid in completed_set
             words.append(w)
-            if wid not in completed_ids:
+            if wid not in completed_set:
                 remaining.append(w)
 
     return words, remaining
@@ -460,29 +485,34 @@ async def get_day_detail(user_id: int, date: str):
     p = dict(plan)
     word_ids = json.loads(p["word_ids"])
     completed_ids = json.loads(p["completed_ids"])
+    completed_set = set(completed_ids)
 
+    # Batch query
     words = []
-    for wid in word_ids:
-        cursor = await db.execute("SELECT * FROM words WHERE id = ?", (wid,))
-        row = await cursor.fetchone()
-        if row:
-            w = dict(row)
+    if word_ids:
+        placeholders = ",".join("?" * len(word_ids))
+        cursor = await db.execute(
+            f"SELECT * FROM words WHERE id IN ({placeholders})", word_ids
+        )
+        rows = await cursor.fetchall()
+        for w in rows:
+            wd = dict(w)
             meanings = []
-            if w.get("meanings"):
+            if wd.get("meanings"):
                 try:
-                    meanings = json.loads(w["meanings"]) if isinstance(w["meanings"], str) else w["meanings"]
+                    meanings = json.loads(wd["meanings"]) if isinstance(wd["meanings"], str) else wd["meanings"]
                 except (json.JSONDecodeError, TypeError):
                     pass
-            if not meanings and w.get("pos") and w.get("meaning_cn"):
-                meanings = [{"pos": w["pos"], "meaning_cn": w["meaning_cn"]}]
+            if not meanings and wd.get("pos") and wd.get("meaning_cn"):
+                meanings = [{"pos": wd["pos"], "meaning_cn": wd["meaning_cn"]}]
             primary = meanings[0] if meanings else {}
             words.append({
-                "id": w["id"],
-                "word": w["word"],
-                "meaning_cn": primary.get("meaning_cn", w.get("meaning_cn", "")),
-                "pos": primary.get("pos", w.get("pos", "")),
+                "id": wd["id"],
+                "word": wd["word"],
+                "meaning_cn": primary.get("meaning_cn", wd.get("meaning_cn", "")),
+                "pos": primary.get("pos", wd.get("pos", "")),
                 "meanings": meanings,
-                "completed": wid in completed_ids,
+                "completed": wd["id"] in completed_set,
             })
 
     # Count words reviewed on this day
@@ -528,15 +558,21 @@ async def clear_day_progress(user_id: int, date: str):
             f"DELETE FROM learning_progress WHERE user_id=? AND word_id IN ({placeholders})",
             [user_id] + all_ids
         )
+        await db.execute(
+            f"DELETE FROM wrong_words WHERE user_id=? AND word_id IN ({placeholders})",
+            [user_id] + all_ids
+        )
 
     await db.commit()
 
 
 async def clear_all_plans(user_id: int):
-    """Delete all daily plans and learning progress for a user, allowing a full restart."""
+    """Delete all daily plans, learning progress, wrong words, and streak for a user, allowing a full restart."""
     db = await get_db()
     await db.execute("DELETE FROM daily_plan WHERE user_id = ?", (user_id,))
     await db.execute("DELETE FROM learning_progress WHERE user_id = ?", (user_id,))
+    await db.execute("DELETE FROM wrong_words WHERE user_id = ?", (user_id,))
+    await db.execute("DELETE FROM user_streak WHERE user_id = ?", (user_id,))
     await db.commit()
 
 
@@ -569,10 +605,11 @@ async def get_due_review_words(user_id: int):
     if not review_ids:
         return []
 
-    words = []
-    for wid in review_ids:
-        cursor = await db.execute("SELECT * FROM words WHERE id = ?", (wid,))
-        row = await cursor.fetchone()
-        if row:
-            words.append(_parse_word(dict(row)))
-    return words
+    # Batch query
+    placeholders = ",".join("?" * len(review_ids))
+    cursor = await db.execute(
+        f"SELECT * FROM words WHERE id IN ({placeholders})", review_ids
+    )
+    rows = await cursor.fetchall()
+    word_map = {row["id"]: _parse_word(dict(row)) for row in rows}
+    return [word_map[wid] for wid in review_ids if wid in word_map]

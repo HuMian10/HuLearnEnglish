@@ -1,4 +1,5 @@
 """Email service - scheduled daily learning plan and summary emails."""
+import asyncio
 import smtplib
 import json
 from email.mime.text import MIMEText
@@ -9,8 +10,8 @@ from models.database import get_db
 from config import SMTP_SERVER, SMTP_PORT, SENDER_EMAIL, SENDER_PASSWORD
 
 
-def _send_email(to: str, subject: str, body: str):
-    """Send an HTML email to a single recipient."""
+def _send_email_sync(to: str, subject: str, body: str):
+    """Send an HTML email to a single recipient (synchronous)."""
     msg = MIMEText(body, "html", "utf-8")
     msg["From"] = Header(f"Hu Learn English <{SENDER_EMAIL}>")
     msg["To"] = Header(to)
@@ -25,6 +26,11 @@ def _send_email(to: str, subject: str, body: str):
     except Exception as e:
         print(f"[email] Failed to send to {to}: {e}")
         return False
+
+
+async def _send_email(to: str, subject: str, body: str):
+    """Send an HTML email asynchronously (non-blocking)."""
+    return await asyncio.to_thread(_send_email_sync, to, subject, body)
 
 
 async def _get_users_with_email():

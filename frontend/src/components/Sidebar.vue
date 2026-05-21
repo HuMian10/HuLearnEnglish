@@ -8,20 +8,22 @@ const auth = useAuthStore()
 const togglePopup = inject('togglePopup')
 
 const navItems = [
-  { page: 'dashboard', icon: '☰', text: '仪表盘' },
+  { page: 'dashboard', icon: '🏠', text: '首页' },
   { page: 'learn', icon: '✍', text: '学习' },
-  { page: 'review', icon: '↺', text: '复习' },
+  { page: 'review', icon: '🔄', text: '复习' },
+  { page: 'word-bank', icon: '📚', text: '词库' },
   { page: 'stats', icon: '📊', text: '统计' },
-  { page: 'calendar', icon: '📅', text: '日历' },
 ]
 </script>
 
 <template>
   <nav class="sidebar">
     <div class="sidebar-header">
-      <img src="/images/app_logo.png" alt="Logo" class="sidebar-logo">
+      <div class="sidebar-logo-wrap">
+        <img src="/images/app_logo.png" alt="Logo" class="sidebar-logo">
+      </div>
       <h1>Hu Learn English</h1>
-      <p class="subtitle">胡学-你的每日英语学习伙伴</p>
+      <p class="subtitle">胡学 - 每日英语学习伙伴</p>
     </div>
     <ul class="nav-list">
       <li
@@ -31,6 +33,7 @@ const navItems = [
         :class="{ active: route.name === item.page }"
         @click="$router.push({ name: item.page })"
       >
+        <span class="nav-bar"></span>
         <span class="nav-icon" v-html="item.icon"></span>
         <span class="nav-text">{{ item.text }}</span>
       </li>
@@ -59,30 +62,43 @@ const navItems = [
 }
 
 .sidebar-header {
-  padding: 24px 20px 16px;
+  padding: 28px 20px 20px;
   border-bottom: 1px solid var(--border);
   text-align: center;
 }
 
+.sidebar-logo-wrap {
+  display: inline-block;
+  padding: 3px;
+  border-radius: 14px;
+  background: var(--gradient-primary);
+  margin-bottom: 10px;
+}
+
 .sidebar-logo {
-  width: 48px;
-  height: 48px;
-  border-radius: 12px;
-  margin-bottom: 8px;
+  width: 44px;
+  height: 44px;
+  border-radius: 11px;
+  border: 2px solid var(--surface);
 }
 
 .sidebar-header h1 {
-  font-size: 20px;
-  color: var(--primary);
+  font-size: 18px;
+  font-weight: 800;
+  background: var(--gradient-primary);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
 }
 
 .sidebar-header .subtitle {
-  font-size: 12px;
+  font-size: 11px;
   color: var(--text-secondary);
   margin-top: 4px;
+  font-weight: 500;
 }
 
-.nav-list { list-style: none; padding: 8px 0; }
+.nav-list { list-style: none; padding: 12px 0; }
 
 .nav-item {
   display: flex;
@@ -93,10 +109,25 @@ const navItems = [
   color: var(--text-secondary);
   transition: all 0.2s;
   font-size: 14px;
+  font-weight: 500;
+  position: relative;
 }
 
-.nav-item:hover { background: var(--bg); color: var(--text); }
-.nav-item.active { color: var(--primary); background: #eef2ff; font-weight: 600; }
+.nav-bar {
+  position: absolute;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 3px;
+  height: 0;
+  border-radius: 0 3px 3px 0;
+  background: var(--gradient-primary);
+  transition: height 0.2s;
+}
+
+.nav-item:hover { color: var(--text); background: rgba(99,102,241,0.03); }
+.nav-item.active { color: var(--primary); font-weight: 700; }
+.nav-item.active .nav-bar { height: 20px; }
 .nav-icon { font-size: 18px; width: 24px; text-align: center; }
 
 .sidebar-footer {
@@ -116,21 +147,22 @@ const navItems = [
 .user-info {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
 }
 
 .user-avatar {
-  width: 28px;
-  height: 28px;
+  width: 32px;
+  height: 32px;
   border-radius: 50%;
-  background: var(--primary);
+  background: var(--gradient-primary);
   color: white;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 13px;
-  font-weight: 600;
+  font-size: 14px;
+  font-weight: 700;
   flex-shrink: 0;
+  box-shadow: 0 2px 8px rgba(99,102,241,0.3);
 }
 
 .user-name {
@@ -145,7 +177,7 @@ const navItems = [
 
 .user-arrow {
   font-size: 18px;
-  color: var(--text-secondary);
+  color: var(--text-tertiary);
 }
 
 @media (max-width: 768px) {

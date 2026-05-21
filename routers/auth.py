@@ -30,7 +30,7 @@ async def get_current_user_id(request: Request) -> int:
 
 
 @router.post("/register")
-async def api_register(req: RegisterRequest, response: Response):
+async def api_register(req: RegisterRequest, response: Response, request: Request):
     if len(req.username) < 2 or len(req.username) > 20:
         return {"ok": False, "error": "用户名长度需要2-20个字符"}
     if len(req.password) < 4:
@@ -47,12 +47,13 @@ async def api_register(req: RegisterRequest, response: Response):
         httponly=True,
         max_age=86400,
         samesite="lax",
+        secure=request.url.scheme == "https",
     )
     return {"ok": True, "user_id": result["user_id"], "username": req.username}
 
 
 @router.post("/login")
-async def api_login(req: LoginRequest, response: Response):
+async def api_login(req: LoginRequest, response: Response, request: Request):
     result = await authenticate(req.username, req.password)
     if not result["ok"]:
         return result
@@ -64,6 +65,7 @@ async def api_login(req: LoginRequest, response: Response):
         httponly=True,
         max_age=86400,
         samesite="lax",
+        secure=request.url.scheme == "https",
     )
     return {"ok": True, "user_id": result["user_id"], "username": req.username}
 

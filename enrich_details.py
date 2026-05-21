@@ -22,7 +22,7 @@ DB_PATH = os.getenv("DB_PATH", "english_lesson.db")
 AUDIO_DIR = os.path.join(os.path.dirname(__file__), "static", "audio")
 
 LLM_API_URL = os.getenv("LLM_API_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions")
-LLM_API_KEY = os.getenv("LLM_API_KEY", "sk-dd4909445edd47c4bbaa4a8e53a141a3")
+LLM_API_KEY = os.getenv("LLM_API_KEY", "")
 LLM_MODEL = os.getenv("LLM_MODEL", "qwen-plus")
 
 LLM_BATCH_SIZE = 15

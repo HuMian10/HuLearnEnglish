@@ -9,8 +9,10 @@ const togglePopup = inject('togglePopup')
 <template>
   <header class="mobile-header">
     <div class="mobile-header-brand">
-      <img src="/images/app_logo.png" alt="Logo" class="mobile-header-logo">
-      <span class="mobile-header-title">Hu Learn English</span>
+      <div class="mobile-header-logo-wrap">
+        <img src="/images/app_logo.png" alt="Logo" class="mobile-header-logo">
+      </div>
+      <span class="mobile-header-title">Hu Learn</span>
     </div>
     <div class="mobile-header-avatar" @click="togglePopup">{{ auth.initial }}</div>
   </header>
@@ -24,12 +26,21 @@ const togglePopup = inject('togglePopup')
   height: 52px;
   padding-top: env(safe-area-inset-top);
   background: var(--surface);
-  border-bottom: 1px solid var(--border);
   z-index: 100;
   align-items: center;
   justify-content: space-between;
   padding-left: 16px;
   padding-right: 16px;
+}
+
+.mobile-header::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--border) 20%, var(--border) 80%, transparent);
 }
 
 .mobile-header-brand {
@@ -38,23 +49,33 @@ const togglePopup = inject('togglePopup')
   gap: 8px;
 }
 
+.mobile-header-logo-wrap {
+  padding: 2px;
+  border-radius: 7px;
+  background: var(--gradient-primary);
+}
+
 .mobile-header-logo {
-  width: 28px;
-  height: 28px;
-  border-radius: 6px;
+  width: 24px;
+  height: 24px;
+  border-radius: 5px;
+  border: 1.5px solid var(--surface);
 }
 
 .mobile-header-title {
   font-size: 16px;
-  font-weight: 700;
-  color: var(--primary);
+  font-weight: 800;
+  background: var(--gradient-primary);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
 }
 
 .mobile-header-avatar {
   width: 32px;
   height: 32px;
   border-radius: 50%;
-  background: var(--primary);
+  background: var(--gradient-primary);
   color: white;
   display: flex;
   align-items: center;
@@ -62,10 +83,11 @@ const togglePopup = inject('togglePopup')
   font-size: 14px;
   font-weight: 700;
   cursor: pointer;
-  transition: opacity 0.2s;
+  transition: opacity 0.2s, transform 0.15s;
+  box-shadow: 0 2px 6px rgba(99,102,241,0.3);
 }
 
-.mobile-header-avatar:active { opacity: 0.8; }
+.mobile-header-avatar:active { opacity: 0.8; transform: scale(0.95); }
 
 @media (max-width: 768px) {
   .mobile-header { display: flex; }

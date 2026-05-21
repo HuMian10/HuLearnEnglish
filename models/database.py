@@ -115,6 +115,32 @@ async def init_database(db_path: str = DB_PATH):
             CREATE INDEX IF NOT EXISTS idx_progress_status ON learning_progress(user_id, status);
             CREATE INDEX IF NOT EXISTS idx_progress_next_review ON learning_progress(user_id, next_review);
             CREATE INDEX IF NOT EXISTS idx_plan_user ON daily_plan(user_id, date);
+
+            CREATE TABLE IF NOT EXISTS wrong_words (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL REFERENCES users(id),
+                word_id INTEGER NOT NULL REFERENCES words(id),
+                wrong_count INTEGER DEFAULT 1,
+                last_wrong_at TEXT DEFAULT '',
+                UNIQUE(user_id, word_id)
+            );
+
+            CREATE TABLE IF NOT EXISTS favorite_words (
+                user_id INTEGER NOT NULL REFERENCES users(id),
+                word_id INTEGER NOT NULL REFERENCES words(id),
+                created_at TEXT DEFAULT '',
+                PRIMARY KEY (user_id, word_id)
+            );
+
+            CREATE TABLE IF NOT EXISTS user_streak (
+                user_id INTEGER NOT NULL REFERENCES users(id) PRIMARY KEY,
+                streak_days INTEGER DEFAULT 0,
+                best_streak INTEGER DEFAULT 0,
+                last_learn_date TEXT DEFAULT ''
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_wrong_words_user ON wrong_words(user_id);
+            CREATE INDEX IF NOT EXISTS idx_favorite_words_user ON favorite_words(user_id);
         """)
 
         await db.commit()

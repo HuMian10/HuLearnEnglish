@@ -271,7 +271,7 @@ function closeOnOverlay(e) {
 </script>
 
 <template>
-  <div v-if="show" class="modal active" @click="closeOnOverlay">
+  <div v-if="show" class="modal active" style="backdrop-filter:blur(4px);-webkit-backdrop-filter:blur(4px)" @click="closeOnOverlay">
     <div class="s-panel" @click.stop>
       <!-- Navbar -->
       <div class="s-navbar">
@@ -514,11 +514,12 @@ function closeOnOverlay(e) {
   background: var(--bg);
   max-width: 480px;
   width: 92%;
-  border-radius: 16px;
+  border-radius: var(--radius-xl);
   display: flex;
   flex-direction: column;
   max-height: 88vh;
   overflow: hidden;
+  box-shadow: var(--shadow-lg);
 }
 
 /* ==================== Navbar ==================== */
@@ -588,16 +589,16 @@ function closeOnOverlay(e) {
   gap: 14px;
   padding: 18px;
   background: var(--surface);
-  border-radius: 14px;
+  border-radius: var(--radius-lg);
   cursor: pointer;
   transition: transform 0.15s, box-shadow 0.15s;
   margin-bottom: 20px;
-  box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+  box-shadow: var(--shadow);
 }
 
 .s-profile:active { transform: scale(0.98); }
 
-.s-avatar { width: 54px; height: 54px; font-size: 24px; flex-shrink: 0; }
+.s-avatar { width: 54px; height: 54px; font-size: 24px; flex-shrink: 0; background: var(--gradient-primary); box-shadow: 0 2px 8px rgba(99,102,241,0.3); }
 
 .s-profile-text { flex: 1; min-width: 0; }
 .s-profile-name { font-size: 17px; font-weight: 700; color: var(--text); }
@@ -611,9 +612,9 @@ function closeOnOverlay(e) {
 /* ==================== Menu group ==================== */
 .s-group {
   background: var(--surface);
-  border-radius: 14px;
+  border-radius: var(--radius-lg);
   overflow: hidden;
-  box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+  box-shadow: var(--shadow);
 }
 
 .s-item {
@@ -643,9 +644,9 @@ function closeOnOverlay(e) {
 /* ==================== Section & rows ==================== */
 .s-section {
   background: var(--surface);
-  border-radius: 14px;
+  border-radius: var(--radius-lg);
   overflow: hidden;
-  box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+  box-shadow: var(--shadow);
   margin-bottom: 8px;
 }
 
@@ -840,17 +841,19 @@ function closeOnOverlay(e) {
   width: 100%;
   padding: 14px;
   border: none;
-  border-radius: 12px;
-  background: var(--primary);
+  border-radius: var(--radius);
+  background: var(--gradient-primary);
   color: white;
   font-size: 15px;
   font-weight: 600;
   cursor: pointer;
   transition: opacity 0.15s, transform 0.1s;
   margin-top: 8px;
+  box-shadow: 0 2px 8px rgba(99,102,241,0.3);
 }
 
 .s-action-btn:active { transform: scale(0.98); opacity: 0.9; }
+.s-action-btn:hover { box-shadow: 0 4px 16px rgba(99,102,241,0.4); }
 
 /* Toast message */
 .s-msg {
