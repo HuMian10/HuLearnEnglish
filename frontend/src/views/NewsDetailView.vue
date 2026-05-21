@@ -13,18 +13,29 @@ const imgError = ref(false)
 // Selection popup state
 const popup = ref(null) // { type: 'word' | 'translate', x, y, data, loading }
 let mousePos = { x: 0, y: 0 }
+let lastTouchPos = { x: 0, y: 0 }
+let selectionDebounce = null
 
 onMounted(() => {
   loadDetail()
+  // Desktop: track mouse position + close popup on click outside
   document.addEventListener('mouseup', handleMouseUp)
   document.addEventListener('mousedown', handleMouseDown)
   document.addEventListener('mousemove', handleMouseMove)
+  // Mobile: track touch position
+  document.addEventListener('touchstart', handleTouchStart, { passive: true })
+  document.addEventListener('touchmove', handleTouchMove, { passive: true })
+  // Cross-platform: detect text selection changes
+  document.addEventListener('selectionchange', handleSelectionChange)
 })
 
 onUnmounted(() => {
   document.removeEventListener('mouseup', handleMouseUp)
   document.removeEventListener('mousedown', handleMouseDown)
   document.removeEventListener('mousemove', handleMouseMove)
+  document.removeEventListener('touchstart', handleTouchStart)
+  document.removeEventListener('touchmove', handleTouchMove)
+  document.removeEventListener('selectionchange', handleSelectionChange)
 })
 
 async function loadDetail() {
@@ -73,6 +84,26 @@ function handleMouseMove(e) {
   mousePos.y = e.clientY
 }
 
+function handleTouchStart(e) {
+  const t = e.touches[0]
+  if (t) {
+    lastTouchPos.x = t.clientX
+    lastTouchPos.y = t.clientY
+  }
+  // Close popup if tapping outside it
+  if (popup.value && !e.target.closest('.lookup-popup')) {
+    popup.value = null
+  }
+}
+
+function handleTouchMove(e) {
+  const t = e.touches[0]
+  if (t) {
+    lastTouchPos.x = t.clientX
+    lastTouchPos.y = t.clientY
+  }
+}
+
 function handleMouseDown(e) {
   // Close popup if clicking outside it
   if (popup.value && !e.target.closest('.lookup-popup')) {
@@ -83,28 +114,40 @@ function handleMouseDown(e) {
 function handleMouseUp(e) {
   // Small delay to let the selection finalize
   setTimeout(() => {
-    const sel = window.getSelection()
-    const text = sel?.toString().trim()
-    if (!text) return
-
-    // Make sure selection is inside article content or title
-    const contentEl = document.querySelector('.article-content')
-    const titleEl = document.querySelector('.article-title')
-    const inContent = contentEl && contentEl.contains(sel.anchorNode)
-    const inTitle = titleEl && titleEl.contains(sel.anchorNode)
-    if (!inContent && !inTitle) return
-
-    // Determine single word vs multi-word
-    const words = text.split(/\s+/).filter(w => w.length > 0)
-    const isSingleWord = words.length === 1 && /[a-zA-Z]/.test(text)
-
-    if (isSingleWord) {
-      const cleanWord = text.replace(/[^a-zA-Z'-]/g, '').toLowerCase()
-      lookupWord(cleanWord)
-    } else {
-      translateText(text)
-    }
+    checkSelection()
   }, 100)
+}
+
+function handleSelectionChange() {
+  // Debounce: selectionchange fires many times during drag-select
+  if (selectionDebounce) clearTimeout(selectionDebounce)
+  selectionDebounce = setTimeout(() => {
+    checkSelection()
+  }, 300)
+}
+
+function checkSelection() {
+  const sel = window.getSelection()
+  const text = sel?.toString().trim()
+  if (!text) return
+
+  // Make sure selection is inside article content or title
+  const contentEl = document.querySelector('.article-content')
+  const titleEl = document.querySelector('.article-title')
+  const inContent = contentEl && contentEl.contains(sel.anchorNode)
+  const inTitle = titleEl && titleEl.contains(sel.anchorNode)
+  if (!inContent && !inTitle) return
+
+  // Determine single word vs multi-word
+  const words = text.split(/\s+/).filter(w => w.length > 0)
+  const isSingleWord = words.length === 1 && /[a-zA-Z]/.test(text)
+
+  if (isSingleWord) {
+    const cleanWord = text.replace(/[^a-zA-Z'-]/g, '').toLowerCase()
+    lookupWord(cleanWord)
+  } else {
+    translateText(text)
+  }
 }
 
 async function lookupWord(word) {
@@ -156,11 +199,26 @@ async function translateText(text) {
 
 function positionPopup() {
   if (!popup.value) return
-  // Position near the mouse
-  const x = Math.min(mousePos.x + 12, window.innerWidth - 340)
-  const y = Math.min(mousePos.y + 12, window.innerHeight - 300)
-  popup.value.x = Math.max(8, x)
-  popup.value.y = Math.max(8, y)
+  // Use touch position on mobile, mouse position on desktop
+  const posX = lastTouchPos.x || mousePos.x
+  const posY = lastTouchPos.y || mousePos.y
+  // Try to get position from selection range
+  const sel = window.getSelection()
+  let rangeX = 0, rangeY = 0
+  if (sel && sel.rangeCount > 0) {
+    const range = sel.getRangeAt(0)
+    const rect = range.getBoundingClientRect()
+    // Position popup below the selection
+    rangeX = rect.left + rect.width / 2
+    rangeY = rect.bottom + 8
+  }
+  // Prefer selection-based position, fallback to pointer position
+  const x = rangeX || Math.min(posX + 12, window.innerWidth - 340)
+  const y = rangeY || Math.min(posY + 12, window.innerHeight - 300)
+  // Clamp to viewport
+  popup.value.x = Math.max(8, Math.min(x - 120, window.innerWidth - 340))
+  popup.value.y = Math.min(y, window.innerHeight - 300)
+  if (popup.value.y < 8) popup.value.y = 8
 }
 
 function closePopup() {
