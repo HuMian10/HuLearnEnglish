@@ -26,7 +26,6 @@ def extract_snumber_from_url(base_url):
     except Exception as e:
         print(f"error: {e}")
     return None
-print(extract_snumber_from_url('https://www.aibase.com/zh/news/'))
 
 def extract_news(snumber):
     url = 'https://mcpapi.aibase.cn/api/aiInfo/detail'
@@ -50,6 +49,7 @@ def extract_news(snumber):
     }
 
 def extract_last_news(snumber):
+    snumber = int(snumber)
     results = []
     for id in range(snumber - 20, snumber):
         try:
@@ -57,4 +57,11 @@ def extract_last_news(snumber):
             results.append(result)
         except Exception as e:
             print(e)
+            print(f"news id: {id}")
     return results
+
+if __name__ == '__main__':
+    url = 'https://www.aibase.com/zh/news/'
+    snumber = extract_snumber_from_url(url)
+    results = extract_last_news(snumber)
+    print(results[:1])

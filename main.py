@@ -5,8 +5,8 @@ from fastapi import FastAPI, Depends
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 
-from routers import words, learning, llm, auth, word_books
-from config import DB_PATH, MORNING_EMAIL_HOUR, EVENING_EMAIL_HOUR, SENDER_PASSWORD
+from routers import words, learning, llm, auth, word_books, news
+from config import DB_PATH, MORNING_EMAIL_HOUR, EVENING_EMAIL_HOUR, SENDER_PASSWORD, NEWS_FETCH_HOUR
 from models.database import init_database
 from services.email_service import send_morning_plan_emails, send_evening_summary_emails
 
@@ -46,6 +46,44 @@ async def _email_scheduler():
         await asyncio.sleep(60)
 
 
+async def _news_scheduler():
+    """Background task: fetch news daily at NEWS_FETCH_HOUR or later if not fetched."""
+    from datetime import datetime
+    from services.news_service import fetch_and_store_news, has_fetched_today
+
+    sent_news = False
+
+    while True:
+        now = datetime.now()
+
+        # Reset on a new day
+        if now.hour == 0 and now.minute < 2:
+            sent_news = False
+
+        # At NEWS_FETCH_HOUR, try to fetch
+        if not sent_news and now.hour == NEWS_FETCH_HOUR and now.minute < 2:
+            sent_news = True
+            try:
+                if not await has_fetched_today():
+                    count = await fetch_and_store_news()
+                    print(f"[news] Auto-fetched {count} articles")
+            except Exception as e:
+                print(f"[news] Auto-fetch error: {e}")
+
+        # Fallback: if hour >= NEWS_FETCH_HOUR+1 and still not fetched today
+        if not sent_news and now.hour >= NEWS_FETCH_HOUR + 1:
+            try:
+                if not await has_fetched_today():
+                    count = await fetch_and_store_news()
+                    print(f"[news] Fallback-fetched {count} articles")
+                    sent_news = True
+            except Exception as e:
+                print(f"[news] Fallback-fetch error: {e}")
+                sent_news = True  # Don't keep retrying
+
+        await asyncio.sleep(60)
+
+
 @asynccontextmanager
 async def lifespan(app):
     # Startup
@@ -53,17 +91,23 @@ async def lifespan(app):
 
     # Start email scheduler only if password is configured
     email_task = None
+    news_task = None
     if SENDER_PASSWORD:
         email_task = asyncio.create_task(_email_scheduler())
         print(f"[email] Scheduler started (morning={MORNING_EMAIL_HOUR}:00, evening={EVENING_EMAIL_HOUR}:00)")
     else:
         print("[email] SENDER_PASSWORD not set, email scheduler disabled")
 
+    news_task = asyncio.create_task(_news_scheduler())
+    print(f"[news] Scheduler started (fetch hour={NEWS_FETCH_HOUR}:00)")
+
     yield
 
     # Shutdown
     if email_task:
         email_task.cancel()
+    if news_task:
+        news_task.cancel()
     from models.database import close_db
     await close_db()
 
@@ -76,6 +120,7 @@ app.include_router(learning.router, prefix="/api/learning", tags=["learning"])
 app.include_router(learning.plan_router, prefix="/api/plan", tags=["plan"])
 app.include_router(llm.router, prefix="/api/llm", tags=["llm"])
 app.include_router(word_books.router, prefix="/api/word-books", tags=["word-books"])
+app.include_router(news.router, prefix="/api/news", tags=["news"])
 
 app.mount("/static", StaticFiles(directory="static"), name="static")
 app.mount("/audio", StaticFiles(directory="static/audio"), name="audio")

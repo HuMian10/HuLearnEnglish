@@ -141,6 +141,19 @@ async def init_database(db_path: str = DB_PATH):
 
             CREATE INDEX IF NOT EXISTS idx_wrong_words_user ON wrong_words(user_id);
             CREATE INDEX IF NOT EXISTS idx_favorite_words_user ON favorite_words(user_id);
+        
+            CREATE TABLE IF NOT EXISTS news (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                source_id INTEGER NOT NULL,
+                title TEXT NOT NULL,
+                content TEXT DEFAULT '',
+                photo_url TEXT DEFAULT '',
+                source_time TEXT DEFAULT '',
+                fetched_at TEXT DEFAULT '',
+                UNIQUE(source_id)
+            );
+        
+            CREATE INDEX IF NOT EXISTS idx_news_fetched ON news(fetched_at);
         """)
 
         await db.commit()

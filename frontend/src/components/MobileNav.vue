@@ -6,7 +6,7 @@ const route = useRoute()
 const navItems = [
   { page: 'dashboard', icon: '🏠', text: '首页' },
   { page: 'learn', icon: '✍', text: '学习' },
-  { page: 'word-bank', icon: '📚', text: '词库' },
+  { page: 'news', icon: '📰', text: '新闻' },
 ]
 </script>
 
@@ -16,12 +16,12 @@ const navItems = [
       v-for="item in navItems"
       :key="item.page"
       class="mobile-nav-item"
-      :class="{ active: route.name === item.page || (item.page === 'learn' && route.name === 'review') }"
+      :class="{ active: route.name === item.page }"
       @click="$router.push({ name: item.page })"
     >
       <span class="mobile-nav-icon" v-html="item.icon"></span>
       <span>{{ item.text }}</span>
-      <div v-if="route.name === item.page || (item.page === 'learn' && route.name === 'review')" class="nav-indicator"></div>
+      <div v-if="route.name === item.page" class="nav-indicator"></div>
     </div>
   </nav>
 </template>

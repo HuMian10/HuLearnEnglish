@@ -13,6 +13,7 @@ const navItems = [
   { page: 'review', icon: '🔄', text: '复习' },
   { page: 'word-bank', icon: '📚', text: '词库' },
   { page: 'stats', icon: '📊', text: '统计' },
+  { page: 'news', icon: '📰', text: '新闻' },
 ]
 </script>
 

@@ -29,3 +29,6 @@ SENDER_PASSWORD = os.getenv("SENDER_PASSWORD", "")
 # 邮件发送时间（24h）
 MORNING_EMAIL_HOUR = int(os.getenv("MORNING_EMAIL_HOUR", "8"))
 EVENING_EMAIL_HOUR = int(os.getenv("EVENING_EMAIL_HOUR", "21"))
+
+# 新闻抓取时间（24h）
+NEWS_FETCH_HOUR = int(os.getenv("NEWS_FETCH_HOUR", "9"))
