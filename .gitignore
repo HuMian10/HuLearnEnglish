@@ -3,3 +3,9 @@
 english_lesson.db
 english_lesson.db-shm
 english_lesson.db-wal
+
+# Python 编译文件
+*.pyc
+__pycache__/
+*.pyo
+*.pyd
