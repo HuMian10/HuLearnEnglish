@@ -27,6 +27,8 @@ onMounted(() => {
   document.addEventListener('touchmove', handleTouchMove, { passive: true })
   // Cross-platform: detect text selection changes
   document.addEventListener('selectionchange', handleSelectionChange)
+  // Safari: prevent system context menu on long press
+  document.addEventListener('contextmenu', handleContextMenu)
 })
 
 onUnmounted(() => {
@@ -36,6 +38,7 @@ onUnmounted(() => {
   document.removeEventListener('touchstart', handleTouchStart)
   document.removeEventListener('touchmove', handleTouchMove)
   document.removeEventListener('selectionchange', handleSelectionChange)
+  document.removeEventListener('contextmenu', handleContextMenu)
 })
 
 async function loadDetail() {
@@ -124,6 +127,15 @@ function handleSelectionChange() {
   selectionDebounce = setTimeout(() => {
     checkSelection()
   }, 300)
+}
+
+function handleContextMenu(e) {
+  // Prevent Safari/iOS system popup on text selection
+  const contentEl = document.querySelector('.article-content')
+  const titleEl = document.querySelector('.article-title')
+  if ((contentEl && contentEl.contains(e.target)) || (titleEl && titleEl.contains(e.target))) {
+    e.preventDefault()
+  }
 }
 
 function checkSelection() {
@@ -417,6 +429,7 @@ function playAudio(url) {
   line-height: 1.4;
   letter-spacing: -0.3px;
   margin-bottom: 16px;
+  -webkit-touch-callout: none;
 }
 
 .article-meta {
@@ -459,6 +472,8 @@ function playAudio(url) {
   hyphens: auto;
   cursor: text;
   user-select: text;
+  -webkit-touch-callout: none;
+  -webkit-user-select: text;
 }
 
 .article-content :deep(p) {
