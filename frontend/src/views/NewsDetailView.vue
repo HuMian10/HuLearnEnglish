@@ -92,6 +92,36 @@ function getSelectedArticleText() {
   return text
 }
 
+// Reliable cross-browser copy that works in HTTP and HTTPS
+function copyTextToClipboard(text) {
+  // Try modern API first
+  if (navigator.clipboard && window.isSecureContext) {
+    return navigator.clipboard.writeText(text).catch(() => fallbackCopy(text))
+  }
+  return fallbackCopy(text)
+}
+
+function fallbackCopy(text) {
+  const ta = document.createElement('textarea')
+  ta.value = text
+  // Style to be invisible but functional
+  ta.style.cssText = 'position:fixed;left:-9999px;top:-9999px;opacity:0;pointer-events:none'
+  ta.setAttribute('readonly', '') // prevent iOS keyboard popup
+  document.body.appendChild(ta)
+  // iOS Safari needs special selection handling
+  const range = document.createRange()
+  range.selectNodeContents(ta)
+  const sel = window.getSelection()
+  sel.removeAllRanges()
+  sel.addRange(range)
+  ta.setSelectionRange(0, text.length) // fallback for iOS
+  let ok = false
+  try { ok = document.execCommand('copy') } catch (e) { ok = false }
+  sel.removeAllRanges()
+  document.body.removeChild(ta)
+  return ok
+}
+
 function isSingleWord(text) {
   const words = text.split(/\s+/).filter(w => w.length > 0)
   return words.length === 1 && /[a-zA-Z]/.test(text)
@@ -136,13 +166,10 @@ function handleSelectionChange() {
   selectionDebounce = setTimeout(() => showToolbarIfNeeded(), 300)
 }
 
-// Completely suppress browser native context menu on article area
+// Completely suppress browser native context menu everywhere on this page
 function handleContextMenu(e) {
-  const contentEl = document.querySelector('.article-content')
-  const titleEl = document.querySelector('.article-title')
-  if ((contentEl && contentEl.contains(e.target)) || (titleEl && titleEl.contains(e.target))) {
-    e.preventDefault()
-  }
+  // Block on entire detail page to prevent Safari system menu
+  e.preventDefault()
 }
 
 function showToolbarIfNeeded() {
@@ -188,23 +215,11 @@ function doTranslate() {
 
 function doCopy() {
   if (!toolbar.value) return
-  navigator.clipboard.writeText(toolbar.value.text).then(() => {
-    toolbar.value = null
-    // Brief toast feedback
-    showToast('已复制')
-  }).catch(() => {
-    // Fallback for older browsers
-    const ta = document.createElement('textarea')
-    ta.value = toolbar.value.text
-    ta.style.position = 'fixed'
-    ta.style.opacity = '0'
-    document.body.appendChild(ta)
-    ta.select()
-    document.execCommand('copy')
-    document.body.removeChild(ta)
-    toolbar.value = null
-    showToast('已复制')
-  })
+  const textToCopy = toolbar.value.text
+  toolbar.value = null // hide toolbar first
+  window.getSelection()?.removeAllRanges() // clear selection to prevent system menu
+  copyTextToClipboard(textToCopy)
+  showToast('已复制')
 }
 
 // Simple toast
@@ -420,7 +435,14 @@ function playAudio(url) { if (!url) return; new Audio(url).play() }
 </template>
 
 <style scoped>
-.detail-page { animation: fadeIn 0.35s ease; max-width: 720px; margin: 0 auto; }
+.detail-page {
+  animation: fadeIn 0.35s ease;
+  max-width: 720px;
+  margin: 0 auto;
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
 
 /* ===== Loading ===== */
 .loading-state { padding: 0; }
