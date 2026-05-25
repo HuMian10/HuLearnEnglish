@@ -154,6 +154,15 @@ async def init_database(db_path: str = DB_PATH):
             );
         
             CREATE INDEX IF NOT EXISTS idx_news_fetched ON news(fetched_at);
+
+            CREATE TABLE IF NOT EXISTS user_news_read (
+                user_id INTEGER NOT NULL REFERENCES users(id),
+                news_id INTEGER NOT NULL REFERENCES news(id),
+                read_at TEXT DEFAULT '',
+                PRIMARY KEY (user_id, news_id)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_news_read_user ON user_news_read(user_id);
         """)
 
         await db.commit()

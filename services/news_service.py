@@ -91,17 +91,41 @@ async def fetch_and_store_news() -> int:
     return count
 
 
-async def get_news_list(days: int = 3) -> list:
-    """Get recent news articles from DB."""
+async def get_news_list(days: int = 3, user_id: int = 0, date: str = "") -> list:
+    """Get recent news articles from DB, with optional date filter and read status."""
     db = await get_db()
-    cutoff = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
+
+    if date:
+        # Filter by specific date
+        where = "WHERE fetched_at >= ? AND fetched_at < ?"
+        next_day = (datetime.strptime(date, '%Y-%m-%d') + timedelta(days=1)).strftime('%Y-%m-%d')
+        params = [date, next_day]
+    else:
+        cutoff = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
+        where = "WHERE fetched_at >= ?"
+        params = [cutoff]
+
     cursor = await db.execute(
-        """SELECT id, source_id, title, content, photo_url, source_time, fetched_at
-           FROM news WHERE fetched_at >= ?
+        f"""SELECT id, source_id, title, content, photo_url, source_time, fetched_at
+           FROM news {where}
            ORDER BY source_time DESC LIMIT 60""",
-        (cutoff,)
+        params
     )
     rows = await cursor.fetchall()
+
+    # Get read status for this user
+    read_ids = set()
+    if user_id:
+        news_ids = [row[0] for row in rows]
+        if news_ids:
+            placeholders = ','.join('?' * len(news_ids))
+            read_cursor = await db.execute(
+                f"SELECT news_id FROM user_news_read WHERE user_id = ? AND news_id IN ({placeholders})",
+                [user_id] + news_ids
+            )
+            read_rows = await read_cursor.fetchall()
+            read_ids = {r[0] for r in read_rows}
+
     return [
         {
             'id': row[0],
@@ -111,6 +135,7 @@ async def get_news_list(days: int = 3) -> list:
             'photo_url': row[4],
             'source_time': row[5],
             'fetched_at': row[6],
+            'is_read': row[0] in read_ids,
         }
         for row in rows
     ]
@@ -148,3 +173,29 @@ async def get_news_detail(news_id: int) -> dict | None:
         'source_time': row[5],
         'fetched_at': row[6],
     }
+
+
+async def mark_news_read(user_id: int, news_id: int):
+    """Mark a news article as read for a user."""
+    db = await get_db()
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    await db.execute(
+        "INSERT OR IGNORE INTO user_news_read (user_id, news_id, read_at) VALUES (?, ?, ?)",
+        (user_id, news_id, now)
+    )
+    await db.commit()
+
+
+async def get_available_dates(days: int = 7) -> list:
+    """Get list of dates that have news articles."""
+    db = await get_db()
+    cutoff = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
+    cursor = await db.execute(
+        """SELECT DISTINCT DATE(fetched_at) as date, COUNT(*) as count
+           FROM news WHERE fetched_at >= ?
+           GROUP BY DATE(fetched_at)
+           ORDER BY date DESC""",
+        (cutoff,)
+    )
+    rows = await cursor.fetchall()
+    return [{"date": row[0], "count": row[1]} for row in rows]

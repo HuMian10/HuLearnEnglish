@@ -4,7 +4,7 @@ import re
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
 from routers.auth import get_current_user_id
-from services.news_service import get_news_list, get_news_detail, fetch_and_store_news, has_fetched_today
+from services.news_service import get_news_list, get_news_detail, fetch_and_store_news, has_fetched_today, mark_news_read, get_available_dates
 from services.word_service import get_words
 from services.llm_service import call_llm_json
 from services.learning_service import get_settings
@@ -14,17 +14,22 @@ router = APIRouter()
 
 
 @router.get("/list")
-async def news_list(user_id: int = Depends(get_current_user_id)):
-    """Get recent news articles."""
-    return {"news": await get_news_list(days=3)}
+async def news_list(
+    date: str = Query("", description="Filter by date YYYY-MM-DD"),
+    user_id: int = Depends(get_current_user_id)
+):
+    """Get recent news articles, optionally filtered by date."""
+    return {"news": await get_news_list(days=7, user_id=user_id, date=date)}
 
 
 @router.get("/detail")
 async def news_detail(id: int = Query(...), user_id: int = Depends(get_current_user_id)):
-    """Get a single news article by ID."""
+    """Get a single news article by ID and mark it as read."""
     article = await get_news_detail(id)
     if not article:
         return {"ok": False, "error": "新闻不存在"}
+    # Auto mark as read
+    await mark_news_read(user_id, id)
     return {"ok": True, "news": article}
 
 
@@ -35,6 +40,12 @@ async def news_fetch(user_id: int = Depends(get_current_user_id)):
         return {"ok": True, "message": "今天已经抓取过新闻了", "count": 0}
     count = await fetch_and_store_news()
     return {"ok": True, "count": count}
+
+
+@router.get("/dates")
+async def news_dates(user_id: int = Depends(get_current_user_id)):
+    """Get available dates that have news."""
+    return {"dates": await get_available_dates(days=7)}
 
 
 @router.get("/lookup-word")

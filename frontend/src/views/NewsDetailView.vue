@@ -9,26 +9,27 @@ const router = useRouter()
 const article = ref(null)
 const loading = ref(true)
 const imgError = ref(false)
+const showBackTop = ref(false)
 
-// Selection popup state
-const popup = ref(null) // { type: 'word' | 'translate', x, y, data, loading }
+// Selection toolbar & result popup state
+const toolbar = ref(null) // { x, y, text }
+const popup = ref(null)   // { type: 'word'|'translate', x, y, loading, data, error, word/text }
 let mousePos = { x: 0, y: 0 }
 let lastTouchPos = { x: 0, y: 0 }
 let selectionDebounce = null
+let isProcessing = false  // prevent double-trigger
 
 onMounted(() => {
   loadDetail()
-  // Desktop: track mouse position + close popup on click outside
   document.addEventListener('mouseup', handleMouseUp)
   document.addEventListener('mousedown', handleMouseDown)
-  document.addEventListener('mousemove', handleMouseMove)
-  // Mobile: track touch position
+  document.addEventListener('mousemove', handleMouseMove, { passive: true })
   document.addEventListener('touchstart', handleTouchStart, { passive: true })
   document.addEventListener('touchmove', handleTouchMove, { passive: true })
-  // Cross-platform: detect text selection changes
+  document.addEventListener('touchend', handleTouchEnd)
   document.addEventListener('selectionchange', handleSelectionChange)
-  // Safari: prevent system context menu on long press
   document.addEventListener('contextmenu', handleContextMenu)
+  window.addEventListener('scroll', handleScroll)
 })
 
 onUnmounted(() => {
@@ -37,30 +38,26 @@ onUnmounted(() => {
   document.removeEventListener('mousemove', handleMouseMove)
   document.removeEventListener('touchstart', handleTouchStart)
   document.removeEventListener('touchmove', handleTouchMove)
+  document.removeEventListener('touchend', handleTouchEnd)
   document.removeEventListener('selectionchange', handleSelectionChange)
   document.removeEventListener('contextmenu', handleContextMenu)
+  window.removeEventListener('scroll', handleScroll)
 })
+
+function handleScroll() { showBackTop.value = window.scrollY > 400 }
 
 async function loadDetail() {
   loading.value = true
   try {
     const data = await api(`news/detail?id=${route.params.id}`)
-    if (data.ok) {
-      article.value = data.news
-    }
-  } catch (e) {
-    console.error(e)
-  }
+    if (data.ok) article.value = data.news
+  } catch (e) { console.error(e) }
   loading.value = false
 }
 
-function goBack() {
-  router.push({ name: 'news' })
-}
-
-function onImgError() {
-  imgError.value = true
-}
+function goBack() { router.push({ name: 'news' }) }
+function onImgError() { imgError.value = true }
+function scrollToTop() { window.scrollTo({ top: 0, behavior: 'smooth' }) }
 
 function fixUrl(url) {
   if (!url) return ''
@@ -73,64 +70,74 @@ function formatDate(timeStr) {
   if (!timeStr) return ''
   const d = new Date(timeStr)
   if (isNaN(d.getTime())) return timeStr
-  const y = d.getFullYear()
-  const m = String(d.getMonth() + 1).padStart(2, '0')
-  const day = String(d.getDate()).padStart(2, '0')
-  const h = String(d.getHours()).padStart(2, '0')
-  const min = String(d.getMinutes()).padStart(2, '0')
-  return `${y}-${m}-${day} ${h}:${min}`
+  const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
+  return `${months[d.getMonth()]} ${d.getDate()}, ${d.getFullYear()}`
 }
 
-// --- Text selection logic ---
-function handleMouseMove(e) {
-  mousePos.x = e.clientX
-  mousePos.y = e.clientY
+function formatReadTime(content) {
+  if (!content) return '1 min'
+  const text = content.replace(/<[^>]+>/g, '')
+  const words = text.split(/\s+/).length
+  return `${Math.max(1, Math.round(words / 200))} min read`
 }
+
+// --- Get selected text, verify it's inside article ---
+function getSelectedArticleText() {
+  const sel = window.getSelection()
+  const text = sel?.toString().trim()
+  if (!text || !/[a-zA-Z]/.test(text)) return null
+  const contentEl = document.querySelector('.article-content')
+  const titleEl = document.querySelector('.article-title')
+  if (!(contentEl?.contains(sel.anchorNode) || titleEl?.contains(sel.anchorNode))) return null
+  return text
+}
+
+function isSingleWord(text) {
+  const words = text.split(/\s+/).filter(w => w.length > 0)
+  return words.length === 1 && /[a-zA-Z]/.test(text)
+}
+
+// --- Selection detection: show toolbar, NOT auto-query ---
+function handleMouseMove(e) { mousePos.x = e.clientX; mousePos.y = e.clientY }
 
 function handleTouchStart(e) {
   const t = e.touches[0]
-  if (t) {
-    lastTouchPos.x = t.clientX
-    lastTouchPos.y = t.clientY
-  }
-  // Close popup if tapping outside it
-  if (popup.value && !e.target.closest('.lookup-popup')) {
-    popup.value = null
+  if (t) { lastTouchPos.x = t.clientX; lastTouchPos.y = t.clientY }
+  // Close toolbar/popup if tapping outside them
+  if (!e.target.closest('.sel-toolbar') && !e.target.closest('.lookup-popup')) {
+    closeAll()
   }
 }
 
 function handleTouchMove(e) {
   const t = e.touches[0]
-  if (t) {
-    lastTouchPos.x = t.clientX
-    lastTouchPos.y = t.clientY
-  }
+  if (t) { lastTouchPos.x = t.clientX; lastTouchPos.y = t.clientY }
+}
+
+function handleTouchEnd() {
+  // Small delay to let the selection finalize on mobile
+  setTimeout(() => showToolbarIfNeeded(), 200)
 }
 
 function handleMouseDown(e) {
-  // Close popup if clicking outside it
-  if (popup.value && !e.target.closest('.lookup-popup')) {
-    popup.value = null
+  // Close toolbar/popup if clicking outside them
+  if (!e.target.closest('.sel-toolbar') && !e.target.closest('.lookup-popup')) {
+    closeAll()
   }
 }
 
-function handleMouseUp(e) {
-  // Small delay to let the selection finalize
-  setTimeout(() => {
-    checkSelection()
-  }, 100)
+function handleMouseUp() {
+  setTimeout(() => showToolbarIfNeeded(), 80)
 }
 
 function handleSelectionChange() {
-  // Debounce: selectionchange fires many times during drag-select
+  if (isProcessing) return
   if (selectionDebounce) clearTimeout(selectionDebounce)
-  selectionDebounce = setTimeout(() => {
-    checkSelection()
-  }, 300)
+  selectionDebounce = setTimeout(() => showToolbarIfNeeded(), 300)
 }
 
+// Completely suppress browser native context menu on article area
 function handleContextMenu(e) {
-  // Prevent Safari/iOS system popup on text selection
   const contentEl = document.querySelector('.article-content')
   const titleEl = document.querySelector('.article-title')
   if ((contentEl && contentEl.contains(e.target)) || (titleEl && titleEl.contains(e.target))) {
@@ -138,23 +145,40 @@ function handleContextMenu(e) {
   }
 }
 
-function checkSelection() {
+function showToolbarIfNeeded() {
+  if (isProcessing) return
+  const text = getSelectedArticleText()
+  if (!text) {
+    // Selection cleared → hide toolbar (but keep popup if open)
+    if (!popup.value) toolbar.value = null
+    return
+  }
+  // Show toolbar above the selection
   const sel = window.getSelection()
-  const text = sel?.toString().trim()
-  if (!text) return
+  let x = 0, y = 0
+  if (sel && sel.rangeCount > 0) {
+    const rect = sel.getRangeAt(0).getBoundingClientRect()
+    x = rect.left + rect.width / 2
+    y = rect.top - 8  // above the selection
+  }
+  // Fallback to pointer position
+  if (!x || !y) {
+    const px = lastTouchPos.x || mousePos.x
+    const py = lastTouchPos.y || mousePos.y
+    x = px; y = py - 20
+  }
+  toolbar.value = { x, y, text }
+}
 
-  // Make sure selection is inside article content or title
-  const contentEl = document.querySelector('.article-content')
-  const titleEl = document.querySelector('.article-title')
-  const inContent = contentEl && contentEl.contains(sel.anchorNode)
-  const inTitle = titleEl && titleEl.contains(sel.anchorNode)
-  if (!inContent && !inTitle) return
+// --- Toolbar actions ---
+function doTranslate() {
+  if (!toolbar.value) return
+  const text = toolbar.value.text
+  toolbar.value = null // hide toolbar
+  isProcessing = true
 
-  // Determine single word vs multi-word
-  const words = text.split(/\s+/).filter(w => w.length > 0)
-  const isSingleWord = words.length === 1 && /[a-zA-Z]/.test(text)
-
-  if (isSingleWord) {
+  // Auto-detect: single word → lookup DB, multi-word → LLM translate
+  if (isSingleWord(text)) {
     const cleanWord = text.replace(/[^a-zA-Z'-]/g, '').toLowerCase()
     lookupWord(cleanWord)
   } else {
@@ -162,604 +186,461 @@ function checkSelection() {
   }
 }
 
+function doCopy() {
+  if (!toolbar.value) return
+  navigator.clipboard.writeText(toolbar.value.text).then(() => {
+    toolbar.value = null
+    // Brief toast feedback
+    showToast('已复制')
+  }).catch(() => {
+    // Fallback for older browsers
+    const ta = document.createElement('textarea')
+    ta.value = toolbar.value.text
+    ta.style.position = 'fixed'
+    ta.style.opacity = '0'
+    document.body.appendChild(ta)
+    ta.select()
+    document.execCommand('copy')
+    document.body.removeChild(ta)
+    toolbar.value = null
+    showToast('已复制')
+  })
+}
+
+// Simple toast
+const toastMsg = ref('')
+let toastTimer = null
+function showToast(msg) {
+  toastMsg.value = msg
+  if (toastTimer) clearTimeout(toastTimer)
+  toastTimer = setTimeout(() => { toastMsg.value = '' }, 1500)
+}
+
 async function lookupWord(word) {
   popup.value = { type: 'word', x: 0, y: 0, loading: true, data: null, error: '', word }
-
-  await nextTick()
-  positionPopup()
-
+  await nextTick(); positionPopup()
   try {
     const data = await api(`news/lookup-word?word=${encodeURIComponent(word)}`)
-    if (data.found) {
-      popup.value.data = data.word
-      popup.value.loading = false
-    } else {
-      popup.value.loading = false
-      popup.value.error = '词库中暂无此词'
-    }
-  } catch (e) {
-    popup.value.loading = false
-    popup.value.error = '查询失败'
-  }
+    if (data.found) { popup.value.data = data.word; popup.value.loading = false }
+    else { popup.value.loading = false; popup.value.error = '词库中暂无此词' }
+  } catch (e) { popup.value.loading = false; popup.value.error = '查询失败' }
+  isProcessing = false
   positionPopup()
 }
 
 async function translateText(text) {
   popup.value = { type: 'translate', x: 0, y: 0, loading: true, data: null, error: '', text }
-
-  await nextTick()
-  positionPopup()
-
+  await nextTick(); positionPopup()
   try {
-    const data = await api('news/translate', {
-      method: 'POST',
-      body: JSON.stringify({ text }),
-    })
-    if (data.ok) {
-      popup.value.data = data.data
-      popup.value.loading = false
-    } else {
-      popup.value.loading = false
-      popup.value.error = data.error || '翻译失败'
-    }
-  } catch (e) {
-    popup.value.loading = false
-    popup.value.error = '翻译请求失败'
-  }
+    const data = await api('news/translate', { method: 'POST', body: JSON.stringify({ text }) })
+    if (data.ok) { popup.value.data = data.data; popup.value.loading = false }
+    else { popup.value.loading = false; popup.value.error = data.error || '翻译失败' }
+  } catch (e) { popup.value.loading = false; popup.value.error = '翻译请求失败' }
+  isProcessing = false
   positionPopup()
 }
 
 function positionPopup() {
   if (!popup.value) return
-  // Use touch position on mobile, mouse position on desktop
-  const posX = lastTouchPos.x || mousePos.x
-  const posY = lastTouchPos.y || mousePos.y
-  // Try to get position from selection range
+  // Position below the selection
   const sel = window.getSelection()
   let rangeX = 0, rangeY = 0
   if (sel && sel.rangeCount > 0) {
-    const range = sel.getRangeAt(0)
-    const rect = range.getBoundingClientRect()
-    // Position popup below the selection
+    const rect = sel.getRangeAt(0).getBoundingClientRect()
     rangeX = rect.left + rect.width / 2
     rangeY = rect.bottom + 8
   }
-  // Prefer selection-based position, fallback to pointer position
+  const posX = lastTouchPos.x || mousePos.x
+  const posY = lastTouchPos.y || mousePos.y
   const x = rangeX || Math.min(posX + 12, window.innerWidth - 340)
   const y = rangeY || Math.min(posY + 12, window.innerHeight - 300)
-  // Clamp to viewport
-  popup.value.x = Math.max(8, Math.min(x - 120, window.innerWidth - 340))
+  popup.value.x = Math.max(8, Math.min(x - 140, window.innerWidth - 340))
   popup.value.y = Math.min(y, window.innerHeight - 300)
   if (popup.value.y < 8) popup.value.y = 8
 }
 
-function closePopup() {
-  popup.value = null
-  window.getSelection()?.removeAllRanges()
-}
-
-function playAudio(url) {
-  if (!url) return
-  const audio = new Audio(url)
-  audio.play()
-}
+function closePopup() { popup.value = null; window.getSelection()?.removeAllRanges() }
+function closeAll() { toolbar.value = null; popup.value = null }
+function playAudio(url) { if (!url) return; new Audio(url).play() }
 </script>
 
 <template>
   <div class="detail-page">
-    <div v-if="loading" class="empty-state">加载中...</div>
-    <div v-else-if="!article" class="empty-state">
-      <p>新闻不存在</p>
-      <button class="btn btn-primary" @click="goBack">返回新闻列表</button>
+    <!-- Loading -->
+    <div v-if="loading" class="loading-state">
+      <div class="ld-hero"></div>
+      <div class="ld-body"><div class="ld-line w70"></div><div class="ld-line w50"></div><div class="ld-line w90"></div></div>
     </div>
 
-    <article v-else class="article">
-      <!-- Back button -->
-      <button class="back-btn" @click="goBack">
-        <span class="back-arrow">←</span>
-        <span>返回列表</span>
-      </button>
+    <!-- Empty -->
+    <div v-else-if="!article" class="empty-state">
+      <div class="empty-icon">😕</div>
+      <p>新闻不存在</p>
+      <button class="action-btn" @click="goBack">返回新闻列表</button>
+    </div>
 
-      <!-- Hero image -->
-      <div v-if="fixUrl(article.photo_url) && !imgError" class="article-hero">
+    <!-- Article -->
+    <article v-else class="article">
+      <div class="top-bar">
+        <button class="back-btn" @click="goBack">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+          <span>返回</span>
+        </button>
+        <div class="top-hint">选中文字可查词/翻译</div>
+      </div>
+
+      <div v-if="fixUrl(article.photo_url) && !imgError" class="hero-wrap">
         <img :src="fixUrl(article.photo_url)" alt="" class="hero-img" @error="onImgError" />
       </div>
 
-      <!-- Title -->
-      <h1 class="article-title">{{ article.title }}</h1>
-
-      <!-- Meta -->
-      <div class="article-meta">
-        <span class="meta-item">
-          <span class="meta-icon">🕐</span>
-          {{ formatDate(article.source_time) }}
-        </span>
-        <span class="meta-item">
-          <span class="meta-icon">📡</span>
-          AIBase
-        </span>
+      <div class="title-area">
+        <h1 class="article-title">{{ article.title }}</h1>
+        <div class="title-meta">
+          <div class="meta-left">
+            <span class="meta-source">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+              AIBase
+            </span>
+            <span class="meta-sep">·</span>
+            <span class="meta-date">{{ formatDate(article.source_time) }}</span>
+            <span class="meta-sep">·</span>
+            <span class="meta-read">{{ formatReadTime(article.content) }}</span>
+          </div>
+        </div>
       </div>
 
-      <!-- Hint -->
-      <div class="select-hint">💡 选中单词可查词，选中短语/句子可翻译</div>
+      <div class="divider-accent"></div>
 
-      <!-- Content (summary may contain HTML, use v-html) -->
       <div class="article-content" v-html="article.content"></div>
 
-      <!-- Bottom actions -->
-      <div class="article-bottom">
-        <button class="btn btn-outline" @click="goBack">← 返回新闻列表</button>
+      <div class="article-footer">
+        <button class="footer-back" @click="goBack">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+          返回新闻列表
+        </button>
       </div>
     </article>
 
-    <!-- Lookup popup (teleported to body) -->
+    <!-- Back to top -->
+    <Transition name="fade">
+      <button v-if="showBackTop" class="back-top" @click="scrollToTop" title="回到顶部">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="18 15 12 9 6 15"/></svg>
+      </button>
+    </Transition>
+
+    <!-- Selection toolbar (floating above selection) -->
+    <Teleport to="body">
+      <Transition name="toolbar">
+        <div v-if="toolbar" class="sel-toolbar" :style="{ left: toolbar.x + 'px', top: toolbar.y + 'px' }">
+          <button class="tb-btn" @click="doTranslate" title="查词/翻译">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 8l6 6"/><path d="M4 14l6-6 2-3"/><path d="M2 5h12"/><path d="M7 2h1"/><path d="M22 22l-5-10-5 10"/><path d="M14 18h6"/></svg>
+            <span>翻译</span>
+          </button>
+          <div class="tb-divider"></div>
+          <button class="tb-btn" @click="doCopy" title="复制">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+            <span>复制</span>
+          </button>
+        </div>
+      </Transition>
+    </Teleport>
+
+    <!-- Result popup -->
     <Teleport to="body">
       <Transition name="popup">
-        <div
-          v-if="popup"
-          class="lookup-popup"
-          :style="{ left: popup.x + 'px', top: popup.y + 'px' }"
-        >
-          <button class="popup-close" @click="closePopup">×</button>
+        <div v-if="popup" class="lookup-popup" :style="{ left: popup.x + 'px', top: popup.y + 'px' }">
+          <button class="popup-close" @click="closePopup">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          </button>
 
           <!-- Loading -->
           <div v-if="popup.loading" class="popup-loading">
-            <span class="popup-spinner"></span>
+            <div class="spinner"></div>
             <span>{{ popup.type === 'word' ? '查词中...' : '翻译中...' }}</span>
           </div>
 
-          <!-- Word lookup result -->
+          <!-- Word lookup -->
           <template v-else-if="popup.type === 'word' && popup.data">
-            <div class="popup-word-header">
-              <span class="popup-word">{{ popup.data.word }}</span>
-              <span class="popup-phonetic" v-if="popup.data.phonetic_us">{{ popup.data.phonetic_us }}</span>
-              <button
-                v-if="popup.data.audio_us"
-                class="popup-play-btn"
-                @click="playAudio(popup.data.audio_us)"
-                title="播放发音"
-              >▶</button>
+            <div class="pw-header">
+              <span class="pw-word">{{ popup.data.word }}</span>
+              <span class="pw-phonetic" v-if="popup.data.phonetic_us">{{ popup.data.phonetic_us }}</span>
+              <button v-if="popup.data.audio_us" class="pw-play" @click="playAudio(popup.data.audio_us)" title="播放发音">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+              </button>
             </div>
-            <div class="popup-meanings" v-if="popup.data.meanings?.length">
-              <div v-for="(m, i) in popup.data.meanings" :key="i" class="popup-meaning-item">
-                <span class="popup-pos" v-if="m.pos">{{ m.pos }}</span>
-                <span class="popup-meaning-text">{{ m.meaning_cn }}</span>
+            <div class="pw-meanings" v-if="popup.data.meanings?.length">
+              <div v-for="(m, i) in popup.data.meanings" :key="i" class="pw-m-item">
+                <span class="pw-pos" v-if="m.pos">{{ m.pos }}</span>
+                <span class="pw-meaning">{{ m.meaning_cn }}</span>
               </div>
             </div>
-            <div v-if="popup.data.example_en" class="popup-example">
-              <div class="popup-example-en">{{ popup.data.example_en }}</div>
-              <div class="popup-example-cn" v-if="popup.data.example_cn">{{ popup.data.example_cn }}</div>
+            <div v-if="popup.data.example_en" class="pw-example">
+              <div class="pw-ex-en">{{ popup.data.example_en }}</div>
+              <div class="pw-ex-cn" v-if="popup.data.example_cn">{{ popup.data.example_cn }}</div>
             </div>
           </template>
 
-          <!-- Translate result -->
+          <!-- Translate -->
           <template v-else-if="popup.type === 'translate' && popup.data">
-            <div class="popup-translate-label">翻译</div>
-            <div class="popup-translation">{{ popup.data.translation }}</div>
-            <div v-if="popup.data.key_words?.length" class="popup-key-words">
-              <div class="popup-kw-label">关键词</div>
-              <div class="popup-kw-list">
-                <span v-for="(kw, i) in popup.data.key_words" :key="i" class="popup-kw-item">
-                  <span class="popup-kw-word">{{ kw.word }}</span>
-                  <span class="popup-kw-meaning">{{ kw.meaning }}</span>
+            <div class="pt-label">翻译</div>
+            <div class="pt-translation">{{ popup.data.translation }}</div>
+            <div v-if="popup.data.key_words?.length" class="pt-keywords">
+              <span class="pt-kw-label">关键词</span>
+              <div class="pt-kw-list">
+                <span v-for="(kw, i) in popup.data.key_words" :key="i" class="pt-kw">
+                  <b>{{ kw.word }}</b> {{ kw.meaning }}
                 </span>
               </div>
             </div>
           </template>
 
-          <!-- Error / Not found -->
+          <!-- Error -->
           <template v-else-if="popup.error">
             <div class="popup-error">{{ popup.error }}</div>
           </template>
 
-          <!-- Word not in DB -->
+          <!-- Not found -->
           <template v-else-if="popup.type === 'word' && !popup.data">
-            <div class="popup-not-found">
-              <span class="popup-word">{{ popup.word }}</span>
-              <span class="popup-nf-text">词库中暂无此词</span>
+            <div class="pw-notfound">
+              <span class="pw-word">{{ popup.word }}</span>
+              <span class="pw-nf">词库中暂无此词</span>
             </div>
           </template>
         </div>
+      </Transition>
+    </Teleport>
+
+    <!-- Toast -->
+    <Teleport to="body">
+      <Transition name="toast">
+        <div v-if="toastMsg" class="copy-toast">{{ toastMsg }}</div>
       </Transition>
     </Teleport>
   </div>
 </template>
 
 <style scoped>
-.detail-page {
-  animation: fadeInUp 0.3s ease;
-  max-width: 720px;
-  margin: 0 auto;
+.detail-page { animation: fadeIn 0.35s ease; max-width: 720px; margin: 0 auto; }
+
+/* ===== Loading ===== */
+.loading-state { padding: 0; }
+.ld-hero { height: 260px; background: var(--bg); border-radius: 20px; margin-bottom: 24px; }
+.ld-body { padding: 0 4px; }
+.ld-line { height: 16px; border-radius: 6px; background: var(--bg); margin-bottom: 14px; }
+.w70 { width: 70%; } .w50 { width: 50%; } .w90 { width: 90%; }
+
+/* ===== Empty ===== */
+.empty-state { text-align: center; padding: 80px 20px; }
+.empty-icon { font-size: 48px; margin-bottom: 12px; }
+.empty-state p { font-size: 15px; color: var(--text-secondary); margin-bottom: 20px; }
+.action-btn {
+  padding: 10px 24px; border-radius: 12px; border: none; font-size: 14px; font-weight: 600;
+  background: var(--gradient-primary); color: white; cursor: pointer;
+  box-shadow: 0 2px 8px rgba(99,102,241,0.3); transition: all 0.2s;
+}
+.action-btn:hover { transform: translateY(-1px); box-shadow: 0 4px 16px rgba(99,102,241,0.4); }
+
+/* ===== Top bar ===== */
+.top-bar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; }
+.back-btn {
+  display: inline-flex; align-items: center; gap: 5px; background: none; border: none;
+  color: var(--primary); font-size: 14px; font-weight: 600; cursor: pointer;
+  padding: 8px 12px; border-radius: 10px; transition: all 0.15s;
+}
+.back-btn:hover { background: rgba(99,102,241,0.06); }
+.top-hint { font-size: 12px; color: var(--text-tertiary); font-weight: 500; }
+
+/* ===== Hero ===== */
+.hero-wrap { border-radius: 20px; overflow: hidden; margin-bottom: 28px; background: var(--bg); }
+.hero-img { width: 100%; max-height: 380px; object-fit: cover; display: block; }
+
+/* ===== Title ===== */
+.title-area { padding: 0 4px; margin-bottom: 20px; }
+.article-title {
+  font-size: 28px; font-weight: 800; color: var(--text); line-height: 1.35;
+  letter-spacing: -0.5px; margin-bottom: 14px; -webkit-touch-callout: none;
+}
+.title-meta { display: flex; align-items: center; flex-wrap: wrap; gap: 2px; }
+.meta-left { display: flex; align-items: center; gap: 6px; }
+.meta-source {
+  display: inline-flex; align-items: center; gap: 4px; font-size: 13px;
+  color: var(--primary); font-weight: 600;
+}
+.meta-source svg { opacity: 0.7; }
+.meta-sep { font-size: 13px; color: var(--text-tertiary); }
+.meta-date { font-size: 13px; color: var(--text-tertiary); font-weight: 500; }
+.meta-read { font-size: 13px; color: var(--text-tertiary); font-weight: 500; }
+
+.divider-accent {
+  width: 48px; height: 3px; border-radius: 2px; background: var(--primary);
+  margin-bottom: 24px; opacity: 0.6;
 }
 
-.article {
-  background: var(--surface);
-  border-radius: var(--radius-xl);
-  padding: 28px 32px;
+/* ===== Content ===== */
+.article-content {
+  font-size: 17px; line-height: 1.9; color: var(--text);
+  word-break: break-word; text-align: justify; hyphens: auto;
+  cursor: text; user-select: text; -webkit-touch-callout: none; -webkit-user-select: text;
+  padding: 0 4px;
+}
+.article-content :deep(p) { margin-bottom: 18px; text-indent: 2em; }
+.article-content :deep(p:last-child) { margin-bottom: 0; }
+.article-content :deep(img) { max-width: 100%; border-radius: 12px; margin: 16px 0; }
+.article-content :deep(a) { color: var(--primary); text-decoration: none; border-bottom: 1px solid rgba(99,102,241,0.3); }
+.article-content :deep(a:hover) { border-bottom-color: var(--primary); }
+.article-content :deep(strong), .article-content :deep(b) { font-weight: 700; color: var(--text); }
+.article-content :deep(em), .article-content :deep(i) { font-style: italic; }
+.article-content :deep(blockquote) {
+  margin: 16px 0; padding: 12px 20px; border-left: 3px solid var(--primary);
+  background: rgba(99,102,241,0.04); border-radius: 0 10px 10px 0; font-style: italic;
+}
+
+/* ===== Footer ===== */
+.article-footer {
+  margin-top: 40px; padding-top: 24px; border-top: 1px solid var(--border); text-align: center;
+}
+.footer-back {
+  display: inline-flex; align-items: center; gap: 6px; background: none; border: 1px solid var(--border);
+  color: var(--text-secondary); font-size: 14px; font-weight: 600; cursor: pointer;
+  padding: 10px 24px; border-radius: 12px; transition: all 0.2s;
+}
+.footer-back:hover { border-color: var(--primary); color: var(--primary); background: rgba(99,102,241,0.04); }
+
+/* ===== Back to top ===== */
+.back-top {
+  position: fixed; bottom: 24px; right: 24px; z-index: 200;
+  width: 44px; height: 44px; border-radius: 14px; border: 1px solid var(--border);
+  background: var(--surface); color: var(--text-secondary); cursor: pointer;
+  display: flex; align-items: center; justify-content: center; transition: all 0.2s;
   box-shadow: var(--shadow);
 }
+.back-top:hover { color: var(--primary); border-color: var(--primary); transform: translateY(-2px); }
 
-.back-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  background: none;
-  border: none;
-  color: var(--primary);
-  font-size: 14px;
-  font-weight: 600;
-  cursor: pointer;
-  padding: 6px 10px;
-  border-radius: var(--radius-sm);
-  transition: all 0.15s;
-  margin-bottom: 20px;
+/* ===== Selection Toolbar ===== */
+.sel-toolbar {
+  position: fixed; z-index: 400;
+  display: flex; align-items: center; gap: 2px;
+  background: var(--text); border-radius: 10px; padding: 4px;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.2);
+  transform: translateX(-50%);
+  /* Arrow pointing down */
+}
+.sel-toolbar::after {
+  content: ''; position: absolute; bottom: -6px; left: 50%; transform: translateX(-50%);
+  width: 0; height: 0; border-left: 6px solid transparent; border-right: 6px solid transparent;
+  border-top: 6px solid var(--text);
 }
 
-.back-btn:hover {
-  background: rgba(99,102,241,0.06);
+.tb-btn {
+  display: flex; align-items: center; gap: 5px;
+  padding: 7px 14px; border: none; border-radius: 7px;
+  background: transparent; color: rgba(255,255,255,0.85); font-size: 13px;
+  font-weight: 600; cursor: pointer; transition: all 0.12s; white-space: nowrap;
 }
+.tb-btn:hover { background: rgba(255,255,255,0.12); color: white; }
+.tb-btn:active { transform: scale(0.95); }
 
-.back-arrow {
-  font-size: 18px;
-  transition: transform 0.2s;
-}
-
-.back-btn:hover .back-arrow {
-  transform: translateX(-3px);
-}
-
-.article-hero {
-  border-radius: var(--radius-lg);
-  overflow: hidden;
-  margin-bottom: 24px;
-  background: var(--bg);
-}
-
-.hero-img {
-  width: 100%;
-  max-height: 360px;
-  object-fit: cover;
-  display: block;
-}
-
-.article-title {
-  font-size: 24px;
-  font-weight: 800;
-  color: var(--text);
-  line-height: 1.4;
-  letter-spacing: -0.3px;
-  margin-bottom: 16px;
-  -webkit-touch-callout: none;
-}
-
-.article-meta {
-  display: flex;
-  gap: 16px;
-  margin-bottom: 16px;
-  padding-bottom: 20px;
-  border-bottom: 1px solid var(--border);
-}
-
-.meta-item {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  font-size: 13px;
-  color: var(--text-tertiary);
-  font-weight: 500;
-}
-
-.meta-icon {
-  font-size: 14px;
-}
-
-.select-hint {
-  font-size: 12px;
-  color: var(--text-tertiary);
-  margin-bottom: 16px;
-  padding: 6px 12px;
-  background: var(--bg);
-  border-radius: var(--radius-sm);
-  text-align: center;
-}
-
-.article-content {
-  font-size: 16px;
-  line-height: 1.85;
-  color: var(--text);
-  word-break: break-word;
-  text-align: justify;
-  hyphens: auto;
-  cursor: text;
-  user-select: text;
-  -webkit-touch-callout: none;
-  -webkit-user-select: text;
-}
-
-.article-content :deep(p) {
-  margin-bottom: 14px;
-  text-indent: 2em;
-}
-
-.article-content :deep(p:last-child) {
-  margin-bottom: 0;
-}
-
-.article-content :deep(img) {
-  max-width: 100%;
-  border-radius: var(--radius-sm);
-  margin: 12px 0;
-}
-
-.article-content :deep(a) {
-  color: var(--primary);
-  text-decoration: none;
-}
-
-.article-content :deep(a:hover) {
-  text-decoration: underline;
-}
-
-.article-content :deep(strong),
-.article-content :deep(b) {
-  font-weight: 700;
-}
-
-.article-content :deep(em),
-.article-content :deep(i) {
-  font-style: italic;
-}
-
-.article-bottom {
-  margin-top: 32px;
-  padding-top: 20px;
-  border-top: 1px solid var(--border);
-  display: flex;
-  justify-content: center;
-}
+.tb-divider { width: 1px; height: 20px; background: rgba(255,255,255,0.2); flex-shrink: 0; }
 
 /* ===== Lookup Popup ===== */
 .lookup-popup {
-  position: fixed;
-  z-index: 300;
-  min-width: 240px;
-  max-width: 320px;
-  background: var(--surface);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-lg);
-  padding: 16px;
-  border: 1px solid var(--border);
+  position: fixed; z-index: 300; min-width: 260px; max-width: 340px;
+  background: var(--surface); border-radius: 16px; padding: 18px;
+  border: 1px solid var(--border); box-shadow: var(--shadow-lg);
+  backdrop-filter: blur(20px);
 }
-
 .popup-close {
-  position: absolute;
-  top: 8px;
-  right: 10px;
-  background: none;
-  border: none;
-  font-size: 18px;
-  color: var(--text-tertiary);
-  cursor: pointer;
-  padding: 2px 6px;
-  border-radius: 4px;
-  line-height: 1;
-  transition: all 0.15s;
+  position: absolute; top: 8px; right: 8px; background: none; border: none;
+  color: var(--text-tertiary); cursor: pointer; padding: 4px; border-radius: 6px;
+  display: flex; align-items: center; justify-content: center; transition: all 0.15s;
 }
+.popup-close:hover { color: var(--text); background: var(--bg); }
 
-.popup-close:hover {
-  color: var(--text);
-  background: var(--bg);
+.popup-loading { display: flex; align-items: center; gap: 10px; font-size: 13px; color: var(--text-secondary); padding: 8px 0; }
+.spinner {
+  width: 16px; height: 16px; border: 2px solid var(--border); border-top-color: var(--primary);
+  border-radius: 50%; animation: spin 0.6s linear infinite;
 }
-
-.popup-loading {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 13px;
-  color: var(--text-secondary);
-  padding: 8px 0;
-}
-
-.popup-spinner {
-  width: 16px;
-  height: 16px;
-  border: 2px solid var(--border);
-  border-top-color: var(--primary);
-  border-radius: 50%;
-  animation: spin 0.6s linear infinite;
-}
-
-@keyframes spin {
-  to { transform: rotate(360deg); }
-}
+@keyframes spin { to { transform: rotate(360deg); } }
 
 /* Word result */
-.popup-word-header {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 10px;
+.pw-header { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
+.pw-word { font-size: 22px; font-weight: 800; color: var(--text); }
+.pw-phonetic { font-size: 13px; color: var(--text-secondary); font-weight: 500; }
+.pw-play {
+  width: 28px; height: 28px; border-radius: 50%; border: none; cursor: pointer;
+  background: rgba(99,102,241,0.08); color: var(--primary); display: flex;
+  align-items: center; justify-content: center; transition: all 0.15s;
 }
+.pw-play:hover { background: rgba(99,102,241,0.15); }
 
-.popup-word {
-  font-size: 20px;
-  font-weight: 800;
-  color: var(--text);
+.pw-meanings { display: flex; flex-direction: column; gap: 7px; margin-bottom: 12px; }
+.pw-m-item { display: flex; align-items: baseline; gap: 8px; font-size: 14px; }
+.pw-pos {
+  display: inline-block; background: rgba(99,102,241,0.08); color: var(--primary);
+  padding: 2px 10px; border-radius: 8px; font-size: 11px; font-weight: 700; flex-shrink: 0;
 }
+.pw-meaning { color: var(--text); font-weight: 500; }
 
-.popup-phonetic {
-  font-size: 13px;
-  color: var(--text-secondary);
-}
-
-.popup-play-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 24px;
-  height: 24px;
-  border-radius: 50%;
-  border: 1.5px solid var(--border);
-  background: var(--surface);
-  cursor: pointer;
-  font-size: 10px;
-  color: var(--primary);
-  transition: all 0.15s;
-  padding: 0;
-}
-
-.popup-play-btn:hover {
-  border-color: var(--primary);
-  background: rgba(99,102,241,0.06);
-}
-
-.popup-meanings {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  margin-bottom: 10px;
-}
-
-.popup-meaning-item {
-  display: flex;
-  align-items: baseline;
-  gap: 6px;
-  font-size: 14px;
-}
-
-.popup-pos {
-  display: inline-block;
-  background: rgba(99,102,241,0.08);
-  color: var(--primary);
-  padding: 1px 8px;
-  border-radius: 10px;
-  font-size: 11px;
-  font-weight: 600;
-  flex-shrink: 0;
-}
-
-.popup-meaning-text {
-  color: var(--text);
-  font-weight: 500;
-}
-
-.popup-example {
-  padding-top: 8px;
-  border-top: 1px solid var(--border);
-  font-size: 13px;
-  line-height: 1.5;
-}
-
-.popup-example-en {
-  color: var(--text);
-  font-weight: 500;
-}
-
-.popup-example-cn {
-  color: var(--text-secondary);
-  margin-top: 2px;
-}
+.pw-example { padding-top: 10px; border-top: 1px solid var(--border); font-size: 13px; line-height: 1.55; }
+.pw-ex-en { color: var(--text); font-weight: 500; }
+.pw-ex-cn { color: var(--text-secondary); margin-top: 3px; }
 
 /* Translate result */
-.popup-translate-label {
-  font-size: 11px;
-  font-weight: 700;
-  color: var(--primary);
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-  margin-bottom: 6px;
+.pt-label { font-size: 11px; font-weight: 700; color: var(--primary); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px; }
+.pt-translation { font-size: 15px; color: var(--text); line-height: 1.65; font-weight: 500; margin-bottom: 14px; }
+.pt-keywords { margin-top: 4px; }
+.pt-kw-label { font-size: 11px; font-weight: 600; color: var(--text-tertiary); margin-bottom: 6px; display: block; }
+.pt-kw-list { display: flex; flex-wrap: wrap; gap: 6px; }
+.pt-kw {
+  display: inline-flex; gap: 4px; background: var(--bg); padding: 4px 12px;
+  border-radius: 10px; font-size: 12px; color: var(--text-secondary);
 }
-
-.popup-translation {
-  font-size: 15px;
-  color: var(--text);
-  line-height: 1.6;
-  font-weight: 500;
-  margin-bottom: 12px;
-}
-
-.popup-kw-label {
-  font-size: 11px;
-  font-weight: 700;
-  color: var(--text-tertiary);
-  margin-bottom: 6px;
-}
-
-.popup-kw-list {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-
-.popup-kw-item {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  background: var(--bg);
-  padding: 3px 10px;
-  border-radius: 12px;
-  font-size: 12px;
-}
-
-.popup-kw-word {
-  color: var(--primary);
-  font-weight: 600;
-}
-
-.popup-kw-meaning {
-  color: var(--text-secondary);
-}
+.pt-kw b { color: var(--primary); font-weight: 600; }
 
 /* Not found */
-.popup-not-found {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
+.pw-notfound { display: flex; flex-direction: column; gap: 4px; }
+.pw-nf { font-size: 13px; color: var(--text-tertiary); }
+
+.popup-error { font-size: 13px; color: var(--danger); font-weight: 500; }
+
+/* ===== Copy Toast ===== */
+.copy-toast {
+  position: fixed; bottom: 80px; left: 50%; transform: translateX(-50%); z-index: 500;
+  background: var(--text); color: white; padding: 10px 20px; border-radius: 10px;
+  font-size: 13px; font-weight: 600; box-shadow: var(--shadow-lg);
 }
 
-.popup-nf-text {
-  font-size: 13px;
-  color: var(--text-tertiary);
-}
+/* ===== Transitions ===== */
+@keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
 
-.popup-error {
-  font-size: 13px;
-  color: var(--danger);
-}
+.toolbar-enter-active { transition: opacity 0.12s ease, transform 0.12s ease; }
+.toolbar-leave-active { transition: opacity 0.08s ease; }
+.toolbar-enter-from { opacity: 0; transform: translateX(-50%) translateY(4px); }
+.toolbar-leave-to { opacity: 0; }
 
-/* Popup transition */
-.popup-enter-active { transition: opacity 0.15s, transform 0.15s; }
-.popup-leave-active { transition: opacity 0.1s; }
-.popup-enter-from { opacity: 0; transform: scale(0.95); }
+.popup-enter-active { transition: opacity 0.15s ease, transform 0.15s ease; }
+.popup-leave-active { transition: opacity 0.1s ease; }
+.popup-enter-from { opacity: 0; transform: scale(0.96) translateY(4px); }
 .popup-leave-to { opacity: 0; }
 
-@keyframes fadeInUp {
-  from { opacity: 0; transform: translateY(12px); }
-  to { opacity: 1; transform: translateY(0); }
-}
+.fade-enter-active, .fade-leave-active { transition: opacity 0.2s, transform 0.2s; }
+.fade-enter-from, .fade-leave-to { opacity: 0; transform: translateY(8px); }
 
+.toast-enter-active { transition: all 0.2s ease; }
+.toast-leave-active { transition: all 0.12s ease; }
+.toast-enter-from, .toast-leave-to { opacity: 0; transform: translateX(-50%) translateY(8px); }
+
+/* ===== Mobile ===== */
 @media (max-width: 768px) {
-  .article {
-    padding: 20px 16px;
-    border-radius: var(--radius-lg);
-  }
-  .article-title {
-    font-size: 20px;
-  }
-  .article-content {
-    font-size: 15px;
-    line-height: 1.75;
-  }
-  .hero-img {
-    max-height: 220px;
-  }
-  .article-meta {
-    gap: 12px;
-    flex-wrap: wrap;
-  }
-  .lookup-popup {
-    min-width: 200px;
-    max-width: 280px;
-  }
+  .article-title { font-size: 22px; }
+  .article-content { font-size: 15px; line-height: 1.8; }
+  .hero-wrap { border-radius: 16px; }
+  .hero-img { max-height: 220px; }
+  .lookup-popup { min-width: 220px; max-width: 290px; }
+  .back-top { bottom: 16px; right: 16px; }
+  .title-area { padding: 0; }
+  .article-content { padding: 0; }
+  .tb-btn { padding: 6px 12px; font-size: 12px; }
 }
 </style>
