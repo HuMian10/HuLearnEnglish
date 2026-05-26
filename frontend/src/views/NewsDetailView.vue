@@ -16,6 +16,8 @@ const toolbar = ref(null) // { x, y, text }
 const popup = ref(null)   // { type: 'word'|'translate', x, y, loading, data, error, word/text }
 let mousePos = { x: 0, y: 0 }
 let lastTouchPos = { x: 0, y: 0 }
+let lastSelectionRect = null  // saved before clearing selection, for popup positioning
+let popupFlipAbove = false   // force popup above the selection (when toolbar was below)
 let selectionDebounce = null
 let isProcessing = false  // prevent double-trigger
 let suppressToolbar = false  // prevent toolbar re-show after button click
@@ -198,7 +200,7 @@ function showToolbarIfNeeded() {
     if (!popup.value) toolbar.value = null
     return
   }
-  // Show toolbar above the selection
+  // Show toolbar above the selection, with smart edge detection
   const sel = window.getSelection()
   let x = 0, y = 0
   if (sel && sel.rangeCount > 0) {
@@ -211,18 +213,50 @@ function showToolbarIfNeeded() {
     const py = lastTouchPos.y || mousePos.y
     x = px; y = py - 20
   }
-  toolbar.value = { x, y, text }
+  // Save selection rect for later popup positioning (before it gets cleared)
+  if (sel && sel.rangeCount > 0) {
+    const rect = sel.getRangeAt(0).getBoundingClientRect()
+    lastSelectionRect = { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom, width: rect.width, height: rect.height }
+  }
+  // Estimate toolbar width (~3 buttons) and clamp position
+  const tbWidth = 220
+  const tbHeight = 44
+  const vw = window.innerWidth
+  const vh = window.innerHeight
+  // Clamp x so toolbar stays within viewport (accounting for translateX(-50%))
+  x = Math.max(tbWidth / 2 + 8, Math.min(x, vw - tbWidth / 2 - 8))
+  // If too close to top, show toolbar below selection instead
+  let toolbarBelow = false
+  if (y - tbHeight < 8) {
+    toolbarBelow = true
+    if (sel && sel.rangeCount > 0) {
+      const rect = sel.getRangeAt(0).getBoundingClientRect()
+      y = rect.bottom + 8
+    } else {
+      y = (lastTouchPos.y || mousePos.y) + 12
+    }
+  }
+  toolbar.value = { x, y, text, below: toolbarBelow }
 }
 
 // --- Toolbar actions ---
 function doTranslate() {
   if (!toolbar.value) return
   const text = toolbar.value.text
+  const toolbarBelow = toolbar.value.below
   toolbar.value = null // hide toolbar
   suppressToolbar = true  // prevent toolbar from re-appearing
   isProcessing = true
   // Clear selection to prevent Safari system menu from appearing
   window.getSelection()?.removeAllRanges()
+
+  // If toolbar was below selection, force popup above to avoid covering text
+  if (toolbarBelow && lastSelectionRect) {
+    // Flip: popup goes above the selection
+    popupFlipAbove = true
+  } else {
+    popupFlipAbove = false
+  }
 
   // Auto-detect: single word → lookup DB, multi-word → LLM translate
   if (isSingleWord(text)) {
@@ -395,7 +429,7 @@ async function lookupWord(word) {
   } catch (e) { popup.value.loading = false; popup.value.error = '查询失败' }
   isProcessing = false
   suppressToolbar = false
-  positionPopup()
+  await nextTick(); positionPopup()  // re-measure after content loaded
 }
 
 async function translateText(text) {
@@ -408,23 +442,66 @@ async function translateText(text) {
   } catch (e) { popup.value.loading = false; popup.value.error = '翻译请求失败' }
   isProcessing = false
   suppressToolbar = false
-  positionPopup()
+  await nextTick(); positionPopup()  // re-measure after content loaded
 }
 
 function positionPopup() {
   if (!popup.value) return
-  // Use stored pointer position (selection may be cleared)
-  const posX = lastTouchPos.x || mousePos.x
-  const posY = lastTouchPos.y || mousePos.y
-  const x = Math.min(posX + 12, window.innerWidth - 340)
-  const y = Math.min(posY + 12, window.innerHeight - 300)
-  popup.value.x = Math.max(8, Math.min(x - 140, window.innerWidth - 340))
-  popup.value.y = Math.max(8, Math.min(y, window.innerHeight - 300))
+  const vw = window.innerWidth
+  const vh = window.innerHeight
+  const GAP = 12  // gap between popup and selection
+
+  // Measure the actual popup element size (already rendered after nextTick)
+  const popupEl = document.querySelector('.lookup-popup')
+  const realWidth = popupEl ? popupEl.offsetWidth : Math.min(340, vw - 16)
+  const realHeight = popupEl ? popupEl.offsetHeight : 160
+
+  // Determine anchor: prefer saved selection rect, then pointer position
+  let anchorX, selBottom, selTop
+
+  if (lastSelectionRect) {
+    anchorX = lastSelectionRect.left + lastSelectionRect.width / 2
+    selBottom = lastSelectionRect.bottom
+    selTop = lastSelectionRect.top
+  } else {
+    anchorX = lastTouchPos.x || mousePos.x
+    selBottom = lastTouchPos.y || mousePos.y
+    selTop = selBottom - 24  // estimate
+  }
+
+  // Horizontal: center popup on anchor, clamp to viewport
+  let x = anchorX - realWidth / 2
+  x = Math.max(8, Math.min(x, vw - realWidth - 8))
+
+  // Vertical: decide whether to place below or above the selection
+  let y
+  const roomBelow = vh - selBottom - GAP   // space available below selection
+  const roomAbove = selTop - GAP           // space available above selection
+
+  if (popupFlipAbove) {
+    // Toolbar was below, so popup must go above
+    y = selTop - realHeight - GAP
+  } else if (roomBelow >= realHeight + 8) {
+    // Enough room below → place below
+    y = selBottom + GAP
+  } else if (roomAbove >= realHeight + 8) {
+    // Not enough below, but enough above → place above
+    y = selTop - realHeight - GAP
+  } else {
+    // Not enough room on either side → place below anyway (user can scroll)
+    y = selBottom + GAP
+  }
+
+  // Final clamp: keep popup within viewport
+  y = Math.max(8, Math.min(y, vh - realHeight - 8))
+
+  popup.value.x = x
+  popup.value.y = y
 }
 
-function closePopup() { popup.value = null; window.getSelection()?.removeAllRanges() }
+function closePopup() { popup.value = null; lastSelectionRect = null; popupFlipAbove = false; window.getSelection()?.removeAllRanges() }
 function closeAll() {
-  toolbar.value = null; popup.value = null
+  toolbar.value = null; popup.value = null; lastSelectionRect = null; popupFlipAbove = false
 }
 function playAudio(url) { if (!url) return; new Audio(url).play() }
 </script>
@@ -496,7 +573,7 @@ function playAudio(url) { if (!url) return; new Audio(url).play() }
     <!-- Selection toolbar (floating above selection) -->
     <Teleport to="body">
       <Transition name="toolbar">
-        <div v-if="toolbar" class="sel-toolbar" :style="{ left: toolbar.x + 'px', top: toolbar.y + 'px' }" @touchend.stop @mousedown.stop>
+        <div v-if="toolbar" class="sel-toolbar" :class="{ 'toolbar-below': toolbar.below }" :style="{ left: toolbar.x + 'px', top: toolbar.y + 'px' }" @touchend.stop @mousedown.stop>
           <button class="tb-btn" @click.stop="doTranslate" @touchend.prevent.stop="doTranslate" title="查词/翻译">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 8l6 6"/><path d="M4 14l6-6 2-3"/><path d="M2 5h12"/><path d="M7 2h1"/><path d="M22 22l-5-10-5 10"/><path d="M14 18h6"/></svg>
             <span>翻译</span>
@@ -765,6 +842,11 @@ function playAudio(url) { if (!url) return; new Audio(url).play() }
   width: 0; height: 0; border-left: 6px solid transparent; border-right: 6px solid transparent;
   border-top: 6px solid var(--text);
 }
+/* When toolbar is below the selection, arrow points up */
+.sel-toolbar.toolbar-below::after {
+  bottom: auto; top: -6px;
+  border-top: none; border-bottom: 6px solid var(--text);
+}
 
 .tb-btn {
   display: flex; align-items: center; gap: 5px;
@@ -781,7 +863,8 @@ function playAudio(url) { if (!url) return; new Audio(url).play() }
 
 /* ===== Lookup Popup ===== */
 .lookup-popup {
-  position: fixed; z-index: 300; min-width: 260px; max-width: 340px;
+  position: fixed; z-index: 300; min-width: 240px; max-width: 340px;
+  width: max-content; max-width: min(340px, calc(100vw - 16px));
   background: var(--surface); border-radius: 16px; padding: 18px;
   border: 1px solid var(--border); box-shadow: var(--shadow-lg);
   backdrop-filter: blur(20px);
@@ -929,7 +1012,7 @@ function playAudio(url) { if (!url) return; new Audio(url).play() }
   .article-content { font-size: 15px; line-height: 1.8; }
   .hero-wrap { border-radius: 16px; }
   .hero-img { max-height: 220px; }
-  .lookup-popup { min-width: 220px; max-width: 290px; }
+  .lookup-popup { min-width: 200px; max-width: min(290px, calc(100vw - 16px)); }
   .back-top { bottom: 16px; right: 16px; }
   .title-area { padding: 0; }
   .article-content { padding: 0; }
