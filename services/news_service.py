@@ -4,6 +4,7 @@ from datetime import datetime, timedelta
 from bs4 import BeautifulSoup
 import re
 from models.database import get_db
+from config import NEWS_FETCH_COUNT, NEWS_RETENTION_DAYS, NEWS_LIST_DAYS, NEWS_LIST_LIMIT, NEWS_SOURCE_URL, NEWS_API_URL
 
 
 def extract_snumber_from_url(base_url: str) -> int | None:
@@ -28,7 +29,7 @@ def extract_snumber_from_url(base_url: str) -> int | None:
 
 def extract_news(snumber: int) -> dict | None:
     """Fetch a single news article from aibase API."""
-    url = 'https://mcpapi.aibase.cn/api/aiInfo/detail'
+    url = NEWS_API_URL
     params = {
         't': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         'langType': 'en',
@@ -56,12 +57,12 @@ def extract_news(snumber: int) -> dict | None:
 
 async def fetch_and_store_news() -> int:
     """Fetch latest 20 news articles and store them in DB. Returns count of new articles."""
-    snumber = extract_snumber_from_url('https://www.aibase.com/zh/news/')
+    snumber = extract_snumber_from_url(NEWS_SOURCE_URL)
     if not snumber:
         return 0
 
     articles = []
-    for id in range(snumber - 20, snumber):
+    for id in range(snumber - NEWS_FETCH_COUNT, snumber):
         article = extract_news(id)
         if article:
             articles.append(article)
@@ -83,7 +84,7 @@ async def fetch_and_store_news() -> int:
     await db.commit()
 
     # Delete news older than 7 days
-    cutoff = (datetime.now() - timedelta(days=7)).strftime("%Y-%m-%d")
+    cutoff = (datetime.now() - timedelta(days=NEWS_RETENTION_DAYS)).strftime("%Y-%m-%d")
     await db.execute("DELETE FROM news WHERE fetched_at < ?", (cutoff,))
     await db.commit()
 
@@ -91,7 +92,7 @@ async def fetch_and_store_news() -> int:
     return count
 
 
-async def get_news_list(days: int = 3, user_id: int = 0, date: str = "") -> list:
+async def get_news_list(days: int = NEWS_LIST_DAYS, user_id: int = 0, date: str = "") -> list:
     """Get recent news articles from DB, with optional date filter and read status."""
     db = await get_db()
 
@@ -108,7 +109,7 @@ async def get_news_list(days: int = 3, user_id: int = 0, date: str = "") -> list
     cursor = await db.execute(
         f"""SELECT id, source_id, title, content, photo_url, source_time, fetched_at
            FROM news {where}
-           ORDER BY source_time DESC LIMIT 60""",
+           ORDER BY source_time DESC LIMIT {NEWS_LIST_LIMIT}""",
         params
     )
     rows = await cursor.fetchall()
@@ -186,7 +187,7 @@ async def mark_news_read(user_id: int, news_id: int):
     await db.commit()
 
 
-async def get_available_dates(days: int = 7) -> list:
+async def get_available_dates(days: int = NEWS_RETENTION_DAYS) -> list:
     """Get list of dates that have news articles."""
     db = await get_db()
     cutoff = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")

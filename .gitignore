@@ -4,6 +4,9 @@ english_lesson.db
 english_lesson.db-shm
 english_lesson.db-wal
 
+# 配置文件（含敏感信息）
+config.yaml
+
 # Python 编译文件
 *.pyc
 __pycache__/

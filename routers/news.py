@@ -11,6 +11,7 @@ from services.llm_service import call_llm_json
 from services.learning_service import get_settings
 from services.tts_service import generate_tts
 from models.database import get_db
+from config import NEWS_LIST_DAYS, TTS_DEFAULT_VOICE
 
 router = APIRouter()
 
@@ -21,7 +22,7 @@ async def news_list(
     user_id: int = Depends(get_current_user_id)
 ):
     """Get recent news articles, optionally filtered by date."""
-    return {"news": await get_news_list(days=7, user_id=user_id, date=date)}
+    return {"news": await get_news_list(days=NEWS_LIST_DAYS, user_id=user_id, date=date)}
 
 
 @router.get("/detail")
@@ -47,7 +48,7 @@ async def news_fetch(user_id: int = Depends(get_current_user_id)):
 @router.get("/dates")
 async def news_dates(user_id: int = Depends(get_current_user_id)):
     """Get available dates that have news."""
-    return {"dates": await get_available_dates(days=7)}
+    return {"dates": await get_available_dates(days=NEWS_LIST_DAYS)}
 
 
 @router.get("/lookup-word")
@@ -126,7 +127,7 @@ English text: {text}"""
 
 class TTSRequest(BaseModel):
     text: str
-    voice: str = "Jasper"
+    voice: str = TTS_DEFAULT_VOICE
 
 
 @router.post("/tts")
