@@ -10,12 +10,13 @@ async def record_wrong_word(user_id: int, word_id: int):
     db = await get_db()
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     await db.execute(
-        """INSERT INTO wrong_words (user_id, word_id, wrong_count, last_wrong_at)
-           VALUES (?, ?, 1, ?)
+        """INSERT INTO wrong_words (user_id, word_id, wrong_count, last_wrong_at, created_at, updated_at)
+           VALUES (?, ?, 1, ?, ?, ?)
            ON CONFLICT(user_id, word_id) DO UPDATE SET
              wrong_count = wrong_count + 1,
-             last_wrong_at = ?""",
-        (user_id, word_id, now, now)
+             last_wrong_at = ?,
+             updated_at = ?""",
+        (user_id, word_id, now, now, now, now, now)
     )
     await db.commit()
 

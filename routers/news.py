@@ -2,12 +2,14 @@
 import json
 import re
 from fastapi import APIRouter, Depends, Query
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from routers.auth import get_current_user_id
 from services.news_service import get_news_list, get_news_detail, fetch_and_store_news, has_fetched_today, mark_news_read, get_available_dates
 from services.word_service import get_words
 from services.llm_service import call_llm_json
 from services.learning_service import get_settings
+from services.tts_service import generate_tts
 from models.database import get_db
 
 router = APIRouter()
@@ -58,7 +60,7 @@ async def lookup_word(word: str = Query(..., min_length=1), user_id: int = Depen
 
     db = await get_db()
     cursor = await db.execute(
-        "SELECT id, word, phonetic_uk, phonetic_us, audio_uk, audio_us, meanings, example_en, example_cn FROM words WHERE word = ?",
+        "SELECT id, word, phonetic_uk, phonetic_us, audio_uk, audio_us, meanings, example_en, example_cn FROM words WHERE word_lower = ?",
         (w,)
     )
     row = await cursor.fetchone()
@@ -120,3 +122,22 @@ English text: {text}"""
         return {"ok": False, "error": str(e)}
     except Exception as e:
         return {"ok": False, "error": f"翻译失败: {str(e)}"}
+
+
+class TTSRequest(BaseModel):
+    text: str
+    voice: str = "Jasper"
+
+
+@router.post("/tts")
+async def text_to_speech(req: TTSRequest, user_id: int = Depends(get_current_user_id)):
+    """Generate TTS audio for the given English text and return WAV file."""
+    text = req.text.strip()
+    if not text:
+        return {"ok": False, "error": "空文本"}
+
+    try:
+        wav_path = await generate_tts(text, voice=req.voice)
+        return FileResponse(wav_path, media_type="audio/wav", filename="tts.wav")
+    except Exception as e:
+        return {"ok": False, "error": f"语音生成失败: {str(e)}"}

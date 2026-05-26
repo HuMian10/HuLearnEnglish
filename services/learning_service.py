@@ -43,10 +43,11 @@ async def get_settings(user_id: int):
 
 async def update_setting(user_id: int, key: str, value: str):
     db = await get_db()
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     await db.execute(
-        """INSERT INTO settings (user_id, key, value) VALUES (?, ?, ?)
-           ON CONFLICT(user_id, key) DO UPDATE SET value=?""",
-        (user_id, key, value, value)
+        """INSERT INTO settings (user_id, key, value, created_at, updated_at) VALUES (?, ?, ?, ?, ?)
+           ON CONFLICT(user_id, key) DO UPDATE SET value=?, updated_at=?""",
+        (user_id, key, value, now, now, value, now)
     )
     await db.commit()
 
@@ -63,7 +64,7 @@ async def _fetch_new_words(user_id: int, count: int) -> list[int]:
            JOIN word_book_words wbw ON w.id = wbw.word_id
            WHERE w.id NOT IN (SELECT word_id FROM learning_progress WHERE user_id = ?)
            AND wbw.word_book_id IN ({placeholders})
-           ORDER BY w.frequency_rank
+           ORDER BY w.id
            LIMIT ?""",
         (user_id, *active_book_ids, count)
     )
@@ -100,9 +101,9 @@ async def _init_new_word_progress(db, user_id: int, word_ids: list[int], today: 
     for word_id in word_ids:
         await db.execute(
             """INSERT OR IGNORE INTO learning_progress
-               (user_id, word_id, status, review_count, correct_count, streak, last_reviewed, next_review, created_at)
-               VALUES (?, ?, 'new', 0, 0, 0, '', ?, ?)""",
-            (user_id, word_id, today, now)
+               (user_id, word_id, status, review_count, correct_count, streak, last_reviewed, next_review, created_at, updated_at)
+               VALUES (?, ?, 'new', 0, 0, 0, '', ?, ?, ?)""",
+            (user_id, word_id, today, now, now)
         )
 
 
@@ -139,9 +140,9 @@ async def generate_daily_plan(user_id: int):
 
     # Create plan
     await db.execute(
-        """INSERT INTO daily_plan (user_id, date, word_ids, review_ids, completed_ids, total, completed)
-           VALUES (?, ?, ?, ?, '[]', ?, 0)""",
-        (user_id, today, json.dumps(all_ids), json.dumps(review_ids), len(all_ids))
+        """INSERT INTO daily_plan (user_id, date, word_ids, review_ids, completed_ids, total, completed, created_at, updated_at)
+           VALUES (?, ?, ?, ?, '[]', ?, 0, ?, ?)""",
+        (user_id, today, json.dumps(all_ids), json.dumps(review_ids), len(all_ids), today, today)
     )
 
     await _init_new_word_progress(db, user_id, new_ids, today)
@@ -186,8 +187,8 @@ async def continue_plan(user_id: int):
     # Append to existing plan
     all_ids = json.loads(p["word_ids"]) + new_ids
     await db.execute(
-        "UPDATE daily_plan SET word_ids=?, total=? WHERE user_id=? AND date=?",
-        (json.dumps(all_ids), len(all_ids), user_id, today)
+        "UPDATE daily_plan SET word_ids=?, total=?, updated_at=? WHERE user_id=? AND date=?",
+        (json.dumps(all_ids), len(all_ids), today, user_id, today)
     )
 
     await _init_new_word_progress(db, user_id, new_ids, today)
@@ -226,9 +227,9 @@ async def submit_review(user_id: int, word_id: int, correct: bool):
         next_review = _next_review_date(streak, correct, now)
         await db.execute(
             """INSERT INTO learning_progress
-               (user_id, word_id, status, review_count, correct_count, streak, last_reviewed, next_review, created_at)
-               VALUES (?, ?, 'learning', 1, ?, ?, ?, ?, ?)""",
-            (user_id, word_id, 1 if correct else 0, streak, now, next_review, now)
+               (user_id, word_id, status, review_count, correct_count, streak, last_reviewed, next_review, created_at, updated_at)
+               VALUES (?, ?, 'learning', 1, ?, ?, ?, ?, ?, ?)""",
+            (user_id, word_id, 1 if correct else 0, streak, now, next_review, now, now)
         )
     else:
         p = dict(progress)
@@ -252,9 +253,9 @@ async def submit_review(user_id: int, word_id: int, correct: bool):
 
         await db.execute(
             """UPDATE learning_progress
-               SET status=?, review_count=?, correct_count=?, streak=?, last_reviewed=?, next_review=?
+               SET status=?, review_count=?, correct_count=?, streak=?, last_reviewed=?, next_review=?, updated_at=?
                WHERE user_id=? AND word_id=?""",
-            (new_status, new_review_count, new_correct_count, new_streak, now, next_review, user_id, word_id)
+            (new_status, new_review_count, new_correct_count, new_streak, now, next_review, now, user_id, word_id)
         )
 
     # Update daily plan completed count
@@ -268,8 +269,8 @@ async def submit_review(user_id: int, word_id: int, correct: bool):
         if word_id not in completed_ids:
             completed_ids.append(word_id)
             await db.execute(
-                "UPDATE daily_plan SET completed_ids=?, completed=? WHERE user_id=? AND date=?",
-                (json.dumps(completed_ids), len(completed_ids), user_id, today)
+                "UPDATE daily_plan SET completed_ids=?, completed=?, updated_at=? WHERE user_id=? AND date=?",
+                (json.dumps(completed_ids), len(completed_ids), now, user_id, today)
             )
 
     await db.commit()
@@ -301,16 +302,16 @@ async def mark_word_mastered(user_id: int, word_id: int):
         p = dict(progress)
         await db.execute(
             """UPDATE learning_progress
-               SET status='mastered', review_count=?, correct_count=?, streak=?, last_reviewed=?, next_review='2099-12-31'
+               SET status='mastered', review_count=?, correct_count=?, streak=?, last_reviewed=?, next_review='2099-12-31', updated_at=?
                WHERE user_id=? AND word_id=?""",
-            (p["review_count"] + 1, p["correct_count"] + 1, (p.get("streak", 0) or 0) + 1, now, user_id, word_id)
+            (p["review_count"] + 1, p["correct_count"] + 1, (p.get("streak", 0) or 0) + 1, now, now, user_id, word_id)
         )
     else:
         await db.execute(
             """INSERT INTO learning_progress
-               (user_id, word_id, status, review_count, correct_count, streak, last_reviewed, next_review, created_at)
-               VALUES (?, ?, 'mastered', 1, 1, 1, ?, '2099-12-31', ?)""",
-            (user_id, word_id, now, now)
+               (user_id, word_id, status, review_count, correct_count, streak, last_reviewed, next_review, created_at, updated_at)
+               VALUES (?, ?, 'mastered', 1, 1, 1, ?, '2099-12-31', ?, ?)""",
+            (user_id, word_id, now, now, now)
         )
 
     # Update daily plan completed count
@@ -324,8 +325,8 @@ async def mark_word_mastered(user_id: int, word_id: int):
         if word_id not in completed_ids:
             completed_ids.append(word_id)
             await db.execute(
-                "UPDATE daily_plan SET completed_ids=?, completed=? WHERE user_id=? AND date=?",
-                (json.dumps(completed_ids), len(completed_ids), user_id, today)
+                "UPDATE daily_plan SET completed_ids=?, completed=?, updated_at=? WHERE user_id=? AND date=?",
+                (json.dumps(completed_ids), len(completed_ids), now, user_id, today)
             )
 
     await db.commit()
@@ -548,8 +549,8 @@ async def clear_day_progress(user_id: int, date: str):
     all_ids = word_ids + review_ids
 
     await db.execute(
-        "UPDATE daily_plan SET completed_ids = '[]', completed = 0 WHERE user_id = ? AND date = ?",
-        (user_id, date),
+        "UPDATE daily_plan SET completed_ids = '[]', completed = 0, updated_at=? WHERE user_id = ? AND date = ?",
+        (date, user_id, date),
     )
 
     if all_ids:

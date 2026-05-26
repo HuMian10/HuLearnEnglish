@@ -35,16 +35,16 @@ async def activate_book(user_id: int, book_id: int):
 
     # Deactivate all current books
     await db.execute(
-        "UPDATE user_word_books SET is_active = 0 WHERE user_id = ?",
-        (user_id,)
+        "UPDATE user_word_books SET is_active = 0, updated_at = ? WHERE user_id = ?",
+        (now, user_id)
     )
 
     # Activate the target book
     await db.execute(
-        """INSERT INTO user_word_books (user_id, word_book_id, is_active, activated_at)
-           VALUES (?, ?, 1, ?)
-           ON CONFLICT(user_id, word_book_id) DO UPDATE SET is_active=1, activated_at=?""",
-        (user_id, book_id, now, now)
+        """INSERT INTO user_word_books (user_id, word_book_id, is_active, activated_at, created_at, updated_at)
+           VALUES (?, ?, 1, ?, ?, ?)
+           ON CONFLICT(user_id, word_book_id) DO UPDATE SET is_active=1, activated_at=?, updated_at=?""",
+        (user_id, book_id, now, now, now, now, now)
     )
 
     # Clear today's plan so it regenerates with the new book's words
@@ -59,14 +59,15 @@ async def activate_book(user_id: int, book_id: int):
 
 async def deactivate_book(user_id: int, book_id: int):
     db = await get_db()
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     # Prevent deactivating the default book
     cursor = await db.execute("SELECT is_default FROM word_books WHERE id = ?", (book_id,))
     row = await cursor.fetchone()
     if row and row[0]:
         return False
     await db.execute(
-        "UPDATE user_word_books SET is_active = 0 WHERE user_id = ? AND word_book_id = ?",
-        (user_id, book_id)
+        "UPDATE user_word_books SET is_active = 0, updated_at = ? WHERE user_id = ? AND word_book_id = ?",
+        (now, user_id, book_id)
     )
     await db.commit()
     return True

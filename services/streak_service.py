@@ -17,11 +17,13 @@ async def update_streak(user_id: int):
     )
     row = await cursor.fetchone()
 
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
     if not row:
         # First time learning
         await db.execute(
-            "INSERT INTO user_streak (user_id, streak_days, best_streak, last_learn_date) VALUES (?, 1, 1, ?)",
-            (user_id, today)
+            "INSERT INTO user_streak (user_id, streak_days, best_streak, last_learn_date, created_at, updated_at) VALUES (?, 1, 1, ?, ?, ?)",
+            (user_id, today, now, now)
         )
         await db.commit()
         return 1
@@ -42,9 +44,10 @@ async def update_streak(user_id: int):
 
     best_streak = max(best_streak, streak_days)
 
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     await db.execute(
-        "UPDATE user_streak SET streak_days = ?, best_streak = ?, last_learn_date = ? WHERE user_id = ?",
-        (streak_days, best_streak, today, user_id)
+        "UPDATE user_streak SET streak_days = ?, best_streak = ?, last_learn_date = ?, updated_at = ? WHERE user_id = ?",
+        (streak_days, best_streak, today, now, user_id)
     )
     await db.commit()
     return streak_days
@@ -71,9 +74,10 @@ async def get_streak(user_id: int) -> dict:
         # Streak was broken since last check
         if streak_days > 0:
             streak_days = 0
+            now_ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             await db.execute(
-                "UPDATE user_streak SET streak_days = 0 WHERE user_id = ?",
-                (user_id,)
+                "UPDATE user_streak SET streak_days = 0, updated_at = ? WHERE user_id = ?",
+                (now_ts, user_id)
             )
             await db.commit()
 

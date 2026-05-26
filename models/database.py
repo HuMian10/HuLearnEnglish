@@ -26,7 +26,8 @@ async def init_database(db_path: str = DB_PATH):
                 username TEXT UNIQUE NOT NULL,
                 hashed_password TEXT NOT NULL,
                 email TEXT DEFAULT '',
-                created_at TEXT DEFAULT ''
+                created_at TEXT DEFAULT '',
+                updated_at TEXT DEFAULT ''
             );
 
             CREATE TABLE IF NOT EXISTS words (
@@ -47,7 +48,9 @@ async def init_database(db_path: str = DB_PATH):
                 present_participle TEXT DEFAULT '',
                 comparative TEXT DEFAULT '',
                 superlative TEXT DEFAULT '',
-                third_person TEXT DEFAULT ''
+                third_person TEXT DEFAULT '',
+                created_at TEXT DEFAULT '',
+                updated_at TEXT DEFAULT ''
             );
 
             CREATE TABLE IF NOT EXISTS learning_progress (
@@ -61,6 +64,7 @@ async def init_database(db_path: str = DB_PATH):
                 last_reviewed TEXT DEFAULT '',
                 next_review TEXT DEFAULT '',
                 created_at TEXT DEFAULT '',
+                updated_at TEXT DEFAULT '',
                 UNIQUE(user_id, word_id)
             );
 
@@ -73,6 +77,8 @@ async def init_database(db_path: str = DB_PATH):
                 completed_ids TEXT DEFAULT '[]',
                 total INTEGER DEFAULT 0,
                 completed INTEGER DEFAULT 0,
+                created_at TEXT DEFAULT '',
+                updated_at TEXT DEFAULT '',
                 UNIQUE(user_id, date)
             );
 
@@ -80,6 +86,8 @@ async def init_database(db_path: str = DB_PATH):
                 user_id INTEGER NOT NULL REFERENCES users(id),
                 key TEXT NOT NULL,
                 value TEXT DEFAULT '',
+                created_at TEXT DEFAULT '',
+                updated_at TEXT DEFAULT '',
                 PRIMARY KEY (user_id, key)
             );
 
@@ -90,12 +98,14 @@ async def init_database(db_path: str = DB_PATH):
                 icon TEXT DEFAULT '',
                 word_count INTEGER DEFAULT 0,
                 is_default INTEGER DEFAULT 0,
-                created_at TEXT DEFAULT ''
+                created_at TEXT DEFAULT '',
+                updated_at TEXT DEFAULT ''
             );
 
             CREATE TABLE IF NOT EXISTS word_book_words (
                 word_book_id INTEGER NOT NULL REFERENCES word_books(id),
                 word_id INTEGER NOT NULL REFERENCES words(id),
+                created_at TEXT DEFAULT '',
                 PRIMARY KEY (word_book_id, word_id)
             );
 
@@ -104,6 +114,8 @@ async def init_database(db_path: str = DB_PATH):
                 word_book_id INTEGER NOT NULL REFERENCES word_books(id),
                 is_active INTEGER DEFAULT 1,
                 activated_at TEXT DEFAULT '',
+                created_at TEXT DEFAULT '',
+                updated_at TEXT DEFAULT '',
                 PRIMARY KEY (user_id, word_book_id)
             );
 
@@ -122,6 +134,8 @@ async def init_database(db_path: str = DB_PATH):
                 word_id INTEGER NOT NULL REFERENCES words(id),
                 wrong_count INTEGER DEFAULT 1,
                 last_wrong_at TEXT DEFAULT '',
+                created_at TEXT DEFAULT '',
+                updated_at TEXT DEFAULT '',
                 UNIQUE(user_id, word_id)
             );
 
@@ -129,6 +143,7 @@ async def init_database(db_path: str = DB_PATH):
                 user_id INTEGER NOT NULL REFERENCES users(id),
                 word_id INTEGER NOT NULL REFERENCES words(id),
                 created_at TEXT DEFAULT '',
+                updated_at TEXT DEFAULT '',
                 PRIMARY KEY (user_id, word_id)
             );
 
@@ -136,7 +151,9 @@ async def init_database(db_path: str = DB_PATH):
                 user_id INTEGER NOT NULL REFERENCES users(id) PRIMARY KEY,
                 streak_days INTEGER DEFAULT 0,
                 best_streak INTEGER DEFAULT 0,
-                last_learn_date TEXT DEFAULT ''
+                last_learn_date TEXT DEFAULT '',
+                created_at TEXT DEFAULT '',
+                updated_at TEXT DEFAULT ''
             );
 
             CREATE INDEX IF NOT EXISTS idx_wrong_words_user ON wrong_words(user_id);
@@ -150,6 +167,8 @@ async def init_database(db_path: str = DB_PATH):
                 photo_url TEXT DEFAULT '',
                 source_time TEXT DEFAULT '',
                 fetched_at TEXT DEFAULT '',
+                created_at TEXT DEFAULT '',
+                updated_at TEXT DEFAULT '',
                 UNIQUE(source_id)
             );
         
@@ -159,6 +178,7 @@ async def init_database(db_path: str = DB_PATH):
                 user_id INTEGER NOT NULL REFERENCES users(id),
                 news_id INTEGER NOT NULL REFERENCES news(id),
                 read_at TEXT DEFAULT '',
+                created_at TEXT DEFAULT '',
                 PRIMARY KEY (user_id, news_id)
             );
 
@@ -174,6 +194,62 @@ async def init_database(db_path: str = DB_PATH):
             await db.commit()
         except Exception:
             pass
+
+    # Migrate: add created_at and updated_at to all tables
+    timestamp_columns = [
+        ('users', 'updated_at', 'TEXT DEFAULT ""'),
+        ('words', 'created_at', 'TEXT DEFAULT ""'),
+        ('words', 'updated_at', 'TEXT DEFAULT ""'),
+        ('learning_progress', 'updated_at', 'TEXT DEFAULT ""'),
+        ('daily_plan', 'created_at', 'TEXT DEFAULT ""'),
+        ('daily_plan', 'updated_at', 'TEXT DEFAULT ""'),
+        ('settings', 'created_at', 'TEXT DEFAULT ""'),
+        ('settings', 'updated_at', 'TEXT DEFAULT ""'),
+        ('word_books', 'updated_at', 'TEXT DEFAULT ""'),
+        ('word_book_words', 'created_at', 'TEXT DEFAULT ""'),
+        ('user_word_books', 'created_at', 'TEXT DEFAULT ""'),
+        ('user_word_books', 'updated_at', 'TEXT DEFAULT ""'),
+        ('wrong_words', 'created_at', 'TEXT DEFAULT ""'),
+        ('wrong_words', 'updated_at', 'TEXT DEFAULT ""'),
+        ('favorite_words', 'updated_at', 'TEXT DEFAULT ""'),
+        ('user_streak', 'created_at', 'TEXT DEFAULT ""'),
+        ('user_streak', 'updated_at', 'TEXT DEFAULT ""'),
+        ('news', 'created_at', 'TEXT DEFAULT ""'),
+        ('news', 'updated_at', 'TEXT DEFAULT ""'),
+        ('user_news_read', 'created_at', 'TEXT DEFAULT ""'),
+    ]
+    async with aiosqlite.connect(db_path) as db:
+        for table, col, col_type in timestamp_columns:
+            try:
+                await db.execute(f"ALTER TABLE {table} ADD COLUMN {col} {col_type}")
+                await db.commit()
+            except Exception:
+                pass
+
+    # Fill empty timestamps with current time for existing rows
+    now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    async with aiosqlite.connect(db_path) as db:
+        for table, col, _ in timestamp_columns:
+            try:
+                await db.execute(f"UPDATE {table} SET {col} = ? WHERE {col} = '' OR {col} IS NULL", (now_str,))
+                await db.commit()
+            except Exception:
+                pass
+
+    # Also fill existing created_at that are empty on tables that already had the column
+    pre_existing_created = [
+        ('users', 'created_at'),
+        ('learning_progress', 'created_at'),
+        ('word_books', 'created_at'),
+        ('favorite_words', 'created_at'),
+    ]
+    async with aiosqlite.connect(db_path) as db:
+        for table, col in pre_existing_created:
+            try:
+                await db.execute(f"UPDATE {table} SET {col} = ? WHERE {col} = '' OR {col} IS NULL", (now_str,))
+                await db.commit()
+            except Exception:
+                pass
 
     # Migrate: add new columns to words table for enhanced word info
     new_columns = [
@@ -226,26 +302,26 @@ async def init_database(db_path: str = DB_PATH):
         await db.commit()
 
     # Migrate: seed default word book and link existing words
-    async with aiosqlite.connect(db_path) as db:
-        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        await db.execute(
-            """INSERT OR IGNORE INTO word_books (id, name, description, icon, is_default, created_at)
-               VALUES (1, '日常生活', '涵盖日常饮食、出行、购物等高频词汇', '🏠', 1, ?)""",
-            (now,)
-        )
-        await db.execute(
-            """INSERT OR IGNORE INTO word_book_words (word_book_id, word_id)
-               SELECT 1, id FROM words"""
-        )
-        await db.execute(
-            "UPDATE word_books SET word_count = (SELECT COUNT(*) FROM word_book_words WHERE word_book_id = 1) WHERE id = 1"
-        )
-        await db.execute(
-            """INSERT OR IGNORE INTO user_word_books (user_id, word_book_id, is_active, activated_at)
-               SELECT id, 1, 1, ? FROM users""",
-            (now,)
-        )
-        await db.commit()
+    # async with aiosqlite.connect(db_path) as db:
+    #     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    #     await db.execute(
+    #         """INSERT OR IGNORE INTO word_books (id, name, description, icon, is_default, created_at)
+    #            VALUES (1, '日常生活', '涵盖日常饮食、出行、购物等高频词汇', '🏠', 1, ?)""",
+    #         (now,)
+    #     )
+    #     await db.execute(
+    #         """INSERT OR IGNORE INTO word_book_words (word_book_id, word_id)
+    #            SELECT 1, id FROM words"""
+    #     )
+    #     await db.execute(
+    #         "UPDATE word_books SET word_count = (SELECT COUNT(*) FROM word_book_words WHERE word_book_id = 1) WHERE id = 1"
+    #     )
+    #     await db.execute(
+    #         """INSERT OR IGNORE INTO user_word_books (user_id, word_book_id, is_active, activated_at)
+    #            SELECT id, 1, 1, ? FROM users""",
+    #         (now,)
+    #     )
+    #     await db.commit()
 
     # Migrate: add default learning mode settings for existing users
     async with aiosqlite.connect(db_path) as db:

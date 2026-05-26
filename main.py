@@ -123,7 +123,7 @@ app.include_router(word_books.router, prefix="/api/word-books", tags=["word-book
 app.include_router(news.router, prefix="/api/news", tags=["news"])
 
 app.mount("/static", StaticFiles(directory="static"), name="static")
-app.mount("/audio", StaticFiles(directory="static/audio"), name="audio")
+app.mount("/audio", StaticFiles(directory="data/audio"), name="audio")
 
 
 @app.get("/")

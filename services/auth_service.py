@@ -47,8 +47,8 @@ async def register(username: str, password: str, email: str = "") -> dict:
     hashed = get_password_hash(password)
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     cursor = await db.execute(
-        "INSERT INTO users (username, hashed_password, email, created_at) VALUES (?, ?, ?, ?)",
-        (username, hashed, email, now)
+        "INSERT INTO users (username, hashed_password, email, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+        (username, hashed, email, now, now)
     )
     await db.commit()
     user_id = cursor.lastrowid
@@ -64,8 +64,8 @@ async def register(username: str, password: str, email: str = "") -> dict:
     ]
     for key, value in defaults:
         await db.execute(
-            "INSERT OR IGNORE INTO settings (user_id, key, value) VALUES (?, ?, ?)",
-            (user_id, key, value)
+            "INSERT OR IGNORE INTO settings (user_id, key, value, created_at, updated_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT(user_id, key) DO NOTHING",
+            (user_id, key, value, now, now)
         )
     await db.commit()
 
@@ -105,6 +105,6 @@ async def update_email(user_id: int, email: str) -> dict:
         if await cursor.fetchone():
             return {"ok": False, "error": "该邮箱已被其他用户绑定"}
 
-    await db.execute("UPDATE users SET email = ? WHERE id = ?", (email, user_id))
+    await db.execute("UPDATE users SET email = ?, updated_at = ? WHERE id = ?", (email, datetime.now().strftime('%Y-%m-%d %H:%M:%S'), user_id))
     await db.commit()
     return {"ok": True}

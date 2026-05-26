@@ -9,8 +9,8 @@ async def add_favorite(user_id: int, word_id: int):
     db = await get_db()
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     await db.execute(
-        "INSERT OR IGNORE INTO favorite_words (user_id, word_id, created_at) VALUES (?, ?, ?)",
-        (user_id, word_id, now)
+        "INSERT OR IGNORE INTO favorite_words (user_id, word_id, created_at, updated_at) VALUES (?, ?, ?, ?)",
+        (user_id, word_id, now, now)
     )
     await db.commit()
 

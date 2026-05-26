@@ -72,10 +72,10 @@ async def fetch_and_store_news() -> int:
     for article in articles:
         try:
             await db.execute(
-                """INSERT OR IGNORE INTO news (source_id, title, content, photo_url, source_time, fetched_at)
-                   VALUES (?, ?, ?, ?, ?, ?)""",
+                """INSERT OR IGNORE INTO news (source_id, title, content, photo_url, source_time, fetched_at, created_at, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
                 (article['source_id'], article['title'], article['content'],
-                 article['photo_url'], article['source_time'], now)
+                 article['photo_url'], article['source_time'], now, now, now)
             )
             count += 1
         except Exception as e:
@@ -180,8 +180,8 @@ async def mark_news_read(user_id: int, news_id: int):
     db = await get_db()
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     await db.execute(
-        "INSERT OR IGNORE INTO user_news_read (user_id, news_id, read_at) VALUES (?, ?, ?)",
-        (user_id, news_id, now)
+        "INSERT OR IGNORE INTO user_news_read (user_id, news_id, read_at, created_at) VALUES (?, ?, ?, ?)",
+        (user_id, news_id, now, now)
     )
     await db.commit()
 

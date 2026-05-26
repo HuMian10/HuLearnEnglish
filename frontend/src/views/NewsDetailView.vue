@@ -1,5 +1,5 @@
 <script setup>
-import { ref, onMounted, onUnmounted, nextTick } from 'vue'
+import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { api } from '../api'
 
@@ -18,6 +18,7 @@ let mousePos = { x: 0, y: 0 }
 let lastTouchPos = { x: 0, y: 0 }
 let selectionDebounce = null
 let isProcessing = false  // prevent double-trigger
+let suppressToolbar = false  // prevent toolbar re-show after button click
 
 onMounted(() => {
   loadDetail()
@@ -28,8 +29,13 @@ onMounted(() => {
   document.addEventListener('touchmove', handleTouchMove, { passive: true })
   document.addEventListener('touchend', handleTouchEnd)
   document.addEventListener('selectionchange', handleSelectionChange)
-  document.addEventListener('contextmenu', handleContextMenu)
+  document.addEventListener('contextmenu', handleContextMenu, false)
+  // Safari: prevent system share/copy/lookup menu
+  document.addEventListener('copy', suppressNativeAction, true)
+  document.addEventListener('cut', suppressNativeAction, true)
   window.addEventListener('scroll', handleScroll)
+  // Add global CSS class to suppress Safari callout on body
+  document.body.classList.add('no-safari-callout')
 })
 
 onUnmounted(() => {
@@ -40,8 +46,11 @@ onUnmounted(() => {
   document.removeEventListener('touchmove', handleTouchMove)
   document.removeEventListener('touchend', handleTouchEnd)
   document.removeEventListener('selectionchange', handleSelectionChange)
-  document.removeEventListener('contextmenu', handleContextMenu)
+  document.removeEventListener('contextmenu', handleContextMenu, false)
+  document.removeEventListener('copy', suppressNativeAction, true)
+  document.removeEventListener('cut', suppressNativeAction, true)
   window.removeEventListener('scroll', handleScroll)
+  document.body.classList.remove('no-safari-callout')
 })
 
 function handleScroll() { showBackTop.value = window.scrollY > 400 }
@@ -133,10 +142,10 @@ function handleMouseMove(e) { mousePos.x = e.clientX; mousePos.y = e.clientY }
 function handleTouchStart(e) {
   const t = e.touches[0]
   if (t) { lastTouchPos.x = t.clientX; lastTouchPos.y = t.clientY }
-  // Close toolbar/popup if tapping outside them
-  if (!e.target.closest('.sel-toolbar') && !e.target.closest('.lookup-popup')) {
-    closeAll()
-  }
+  // Don't close if user tapped a toolbar button (the action handler manages closing)
+  if (e.target.closest('.sel-toolbar')) return
+  if (e.target.closest('.lookup-popup')) return
+  closeAll()
 }
 
 function handleTouchMove(e) {
@@ -145,15 +154,16 @@ function handleTouchMove(e) {
 }
 
 function handleTouchEnd() {
+  if (suppressToolbar) return
   // Small delay to let the selection finalize on mobile
   setTimeout(() => showToolbarIfNeeded(), 200)
 }
 
 function handleMouseDown(e) {
-  // Close toolbar/popup if clicking outside them
-  if (!e.target.closest('.sel-toolbar') && !e.target.closest('.lookup-popup')) {
-    closeAll()
-  }
+  // Don't close if clicking toolbar buttons (action handler manages closing)
+  if (e.target.closest('.sel-toolbar')) return
+  if (e.target.closest('.lookup-popup')) return
+  closeAll()
 }
 
 function handleMouseUp() {
@@ -166,17 +176,24 @@ function handleSelectionChange() {
   selectionDebounce = setTimeout(() => showToolbarIfNeeded(), 300)
 }
 
-// Completely suppress browser native context menu everywhere on this page
+// Suppress all browser native menus (context, copy, cut) on this page
 function handleContextMenu(e) {
-  // Block on entire detail page to prevent Safari system menu
   e.preventDefault()
 }
 
+function suppressNativeAction(e) {
+  // Only suppress if triggered from article content area
+  const contentEl = document.querySelector('.article-content')
+  const titleEl = document.querySelector('.article-title')
+  if (contentEl?.contains(e.target) || titleEl?.contains(e.target)) {
+    e.preventDefault()
+  }
+}
+
 function showToolbarIfNeeded() {
-  if (isProcessing) return
+  if (isProcessing || suppressToolbar) return
   const text = getSelectedArticleText()
   if (!text) {
-    // Selection cleared → hide toolbar (but keep popup if open)
     if (!popup.value) toolbar.value = null
     return
   }
@@ -188,7 +205,6 @@ function showToolbarIfNeeded() {
     x = rect.left + rect.width / 2
     y = rect.top - 8  // above the selection
   }
-  // Fallback to pointer position
   if (!x || !y) {
     const px = lastTouchPos.x || mousePos.x
     const py = lastTouchPos.y || mousePos.y
@@ -202,7 +218,10 @@ function doTranslate() {
   if (!toolbar.value) return
   const text = toolbar.value.text
   toolbar.value = null // hide toolbar
+  suppressToolbar = true  // prevent toolbar from re-appearing
   isProcessing = true
+  // Clear selection to prevent Safari system menu from appearing
+  window.getSelection()?.removeAllRanges()
 
   // Auto-detect: single word → lookup DB, multi-word → LLM translate
   if (isSingleWord(text)) {
@@ -216,11 +235,145 @@ function doTranslate() {
 function doCopy() {
   if (!toolbar.value) return
   const textToCopy = toolbar.value.text
-  toolbar.value = null // hide toolbar first
-  window.getSelection()?.removeAllRanges() // clear selection to prevent system menu
+  toolbar.value = null // hide toolbar
+  suppressToolbar = true
+  window.getSelection()?.removeAllRanges()
   copyTextToClipboard(textToCopy)
   showToast('已复制')
+  // Re-enable toolbar after a delay
+  setTimeout(() => { suppressToolbar = false }, 500)
 }
+
+// --- TTS: speak selected text ---
+// State: 'idle' | 'generating' | 'playing' | 'paused'
+let ttsState = ref('idle')
+let ttsText = ref('')
+let ttsProgress = ref(0)  // playback progress 0-100
+let currentTtsAudio = null
+let ttsAbortController = null
+let ttsBlobUrl = null
+let ttsProgressTimer = null
+
+function cleanupTts() {
+  if (currentTtsAudio) {
+    currentTtsAudio.pause()
+    currentTtsAudio.onended = null
+    currentTtsAudio.ontimeupdate = null
+    currentTtsAudio.onerror = null
+    currentTtsAudio = null
+  }
+  if (ttsBlobUrl) {
+    URL.revokeObjectURL(ttsBlobUrl)
+    ttsBlobUrl = null
+  }
+  if (ttsAbortController) {
+    ttsAbortController.abort()
+    ttsAbortController = null
+  }
+  if (ttsProgressTimer) {
+    clearInterval(ttsProgressTimer)
+    ttsProgressTimer = null
+  }
+  ttsState.value = 'idle'
+  ttsText.value = ''
+  ttsProgress.value = 0
+}
+
+async function doSpeak(text) {
+  if (!text) return
+  // If currently playing/paused this same text → toggle pause/resume
+  if (currentTtsAudio && ttsText.value === text) {
+    toggleTtsPlay()
+    return
+  }
+  // New text → clean up previous
+  cleanupTts()
+
+  ttsText.value = text
+  ttsAbortController = new AbortController()
+
+  // --- Phase 1: Generating ---
+  ttsState.value = 'generating'
+  try {
+    const resp = await fetch('/api/news/tts', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ text, voice: 'Jasper' }),
+      signal: ttsAbortController.signal
+    })
+    if (ttsState.value !== 'generating') return // cancelled
+    if (!resp.ok) throw new Error('TTS request failed')
+    const contentType = resp.headers.get('content-type') || ''
+    if (!contentType.includes('audio')) {
+      const data = await resp.json()
+      throw new Error(data.error || '语音生成失败')
+    }
+    const blob = await resp.blob()
+    if (ttsState.value !== 'generating') return // cancelled during download
+
+    // --- Phase 2: Playing ---
+    ttsBlobUrl = URL.createObjectURL(blob)
+    currentTtsAudio = new Audio(ttsBlobUrl)
+
+    currentTtsAudio.onended = () => {
+      cleanupTts()
+    }
+    currentTtsAudio.onerror = () => {
+      showToast('播放失败')
+      cleanupTts()
+    }
+    currentTtsAudio.ontimeupdate = () => {
+      if (currentTtsAudio && currentTtsAudio.duration) {
+        ttsProgress.value = Math.round((currentTtsAudio.currentTime / currentTtsAudio.duration) * 100)
+      }
+    }
+
+    await currentTtsAudio.play()
+    ttsState.value = 'playing'
+  } catch (e) {
+    if (e.name === 'AbortError') {
+      // User cancelled
+      cleanupTts()
+      return
+    }
+    console.error('TTS error:', e)
+    showToast(e.message || '语音生成失败')
+    cleanupTts()
+  }
+}
+
+function cancelTts() {
+  cleanupTts()
+  showToast('已取消')
+}
+
+function toggleTtsPlay() {
+  if (!currentTtsAudio) return
+  if (ttsState.value === 'playing') {
+    currentTtsAudio.pause()
+    ttsState.value = 'paused'
+  } else if (ttsState.value === 'paused') {
+    currentTtsAudio.play()
+    ttsState.value = 'playing'
+  }
+}
+
+function stopTts() {
+  cleanupTts()
+}
+
+function doSpeakFromToolbar() {
+  if (!toolbar.value) return
+  const text = toolbar.value.text
+  toolbar.value = null
+  suppressToolbar = true
+  window.getSelection()?.removeAllRanges()
+  doSpeak(text)
+  setTimeout(() => { suppressToolbar = false }, 500)
+}
+
+const ttsLoading = computed(() => ttsState.value === 'generating')
 
 // Simple toast
 const toastMsg = ref('')
@@ -240,6 +393,7 @@ async function lookupWord(word) {
     else { popup.value.loading = false; popup.value.error = '词库中暂无此词' }
   } catch (e) { popup.value.loading = false; popup.value.error = '查询失败' }
   isProcessing = false
+  suppressToolbar = false
   positionPopup()
 }
 
@@ -252,30 +406,25 @@ async function translateText(text) {
     else { popup.value.loading = false; popup.value.error = data.error || '翻译失败' }
   } catch (e) { popup.value.loading = false; popup.value.error = '翻译请求失败' }
   isProcessing = false
+  suppressToolbar = false
   positionPopup()
 }
 
 function positionPopup() {
   if (!popup.value) return
-  // Position below the selection
-  const sel = window.getSelection()
-  let rangeX = 0, rangeY = 0
-  if (sel && sel.rangeCount > 0) {
-    const rect = sel.getRangeAt(0).getBoundingClientRect()
-    rangeX = rect.left + rect.width / 2
-    rangeY = rect.bottom + 8
-  }
+  // Use stored pointer position (selection may be cleared)
   const posX = lastTouchPos.x || mousePos.x
   const posY = lastTouchPos.y || mousePos.y
-  const x = rangeX || Math.min(posX + 12, window.innerWidth - 340)
-  const y = rangeY || Math.min(posY + 12, window.innerHeight - 300)
+  const x = Math.min(posX + 12, window.innerWidth - 340)
+  const y = Math.min(posY + 12, window.innerHeight - 300)
   popup.value.x = Math.max(8, Math.min(x - 140, window.innerWidth - 340))
-  popup.value.y = Math.min(y, window.innerHeight - 300)
-  if (popup.value.y < 8) popup.value.y = 8
+  popup.value.y = Math.max(8, Math.min(y, window.innerHeight - 300))
 }
 
 function closePopup() { popup.value = null; window.getSelection()?.removeAllRanges() }
-function closeAll() { toolbar.value = null; popup.value = null }
+function closeAll() {
+  toolbar.value = null; popup.value = null
+}
 function playAudio(url) { if (!url) return; new Audio(url).play() }
 </script>
 
@@ -352,6 +501,11 @@ function playAudio(url) { if (!url) return; new Audio(url).play() }
             <span>翻译</span>
           </button>
           <div class="tb-divider"></div>
+          <button class="tb-btn" @click="doSpeakFromToolbar" title="朗读" :disabled="ttsLoading">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/></svg>
+            <span>朗读</span>
+          </button>
+          <div class="tb-divider"></div>
           <button class="tb-btn" @click="doCopy" title="复制">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
             <span>复制</span>
@@ -382,6 +536,10 @@ function playAudio(url) { if (!url) return; new Audio(url).play() }
               <button v-if="popup.data.audio_us" class="pw-play" @click="playAudio(popup.data.audio_us)" title="播放发音">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
               </button>
+              <button class="pw-play pw-tts" @click="doSpeak(popup.data.word)" :disabled="ttsLoading && ttsText !== popup.data.word" :title="ttsState === 'playing' && ttsText === popup.data.word ? '暂停' : '朗读'">
+                <svg v-if="ttsState === 'playing' && ttsText === popup.data.word" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
+                <svg v-else width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/></svg>
+              </button>
             </div>
             <div class="pw-meanings" v-if="popup.data.meanings?.length">
               <div v-for="(m, i) in popup.data.meanings" :key="i" class="pw-m-item">
@@ -397,7 +555,13 @@ function playAudio(url) { if (!url) return; new Audio(url).play() }
 
           <!-- Translate -->
           <template v-else-if="popup.type === 'translate' && popup.data">
-            <div class="pt-label">翻译</div>
+            <div class="pt-header">
+              <div class="pt-label">翻译</div>
+              <button class="pw-play pw-tts" @click="doSpeak(popup.text)" :disabled="ttsLoading && ttsText !== popup.text" :title="ttsState === 'playing' && ttsText === popup.text ? '暂停' : '朗读原文'">
+                <svg v-if="ttsState === 'playing' && ttsText === popup.text" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
+                <svg v-else width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/></svg>
+              </button>
+            </div>
             <div class="pt-translation">{{ popup.data.translation }}</div>
             <div v-if="popup.data.key_words?.length" class="pt-keywords">
               <span class="pt-kw-label">关键词</span>
@@ -425,6 +589,43 @@ function playAudio(url) { if (!url) return; new Audio(url).play() }
       </Transition>
     </Teleport>
 
+    <!-- TTS Player Bar -->
+    <Teleport to="body">
+      <Transition name="tts-bar">
+        <div v-if="ttsState !== 'idle'" class="tts-bar">
+          <div class="tts-progress" :style="{ width: ttsProgress + '%' }"></div>
+          <div class="tts-info">
+            <div class="tts-icon">
+              <!-- generating: spinner -->
+              <div v-if="ttsState === 'generating'" class="tts-spinner"></div>
+              <!-- playing: sound wave -->
+              <svg v-else-if="ttsState === 'playing'" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/></svg>
+              <!-- paused: pause icon -->
+              <svg v-else width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
+            </div>
+            <div class="tts-meta">
+              <span class="tts-label">{{ ttsState === 'generating' ? '语音生成中...' : ttsState === 'playing' ? '正在朗读' : '已暂停' }}</span>
+              <span class="tts-text">{{ ttsText.length > 30 ? ttsText.slice(0, 30) + '...' : ttsText }}</span>
+            </div>
+          </div>
+          <div class="tts-controls">
+            <button v-if="ttsState === 'generating'" class="tts-ctrl" @click="cancelTts" title="取消">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+            </button>
+            <template v-else>
+              <button class="tts-ctrl" @click="toggleTtsPlay" :title="ttsState === 'playing' ? '暂停' : '继续'">
+                <svg v-if="ttsState === 'playing'" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
+                <svg v-else width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+              </button>
+              <button class="tts-ctrl" @click="stopTts" title="停止">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="6" width="12" height="12" rx="1"/></svg>
+              </button>
+            </template>
+          </div>
+        </div>
+      </Transition>
+    </Teleport>
+
     <!-- Toast -->
     <Teleport to="body">
       <Transition name="toast">
@@ -435,6 +636,17 @@ function playAudio(url) { if (!url) return; new Audio(url).play() }
 </template>
 
 <style scoped>
+/* Global: suppress Safari touch callout via body class */
+:global(.no-safari-callout) {
+  -webkit-touch-callout: none !important;
+}
+:global(.no-safari-callout .article-content),
+:global(.no-safari-callout .article-title) {
+  -webkit-touch-callout: none !important;
+  -webkit-user-select: text !important;
+  user-select: text !important;
+}
+
 .detail-page {
   animation: fadeIn 0.35s ease;
   max-width: 720px;
@@ -561,6 +773,8 @@ function playAudio(url) { if (!url) return; new Audio(url).play() }
 }
 .tb-btn:hover { background: rgba(255,255,255,0.12); color: white; }
 .tb-btn:active { transform: scale(0.95); }
+.tb-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.tb-btn:disabled:active { transform: none; }
 
 .tb-divider { width: 1px; height: 20px; background: rgba(255,255,255,0.2); flex-shrink: 0; }
 
@@ -595,6 +809,8 @@ function playAudio(url) { if (!url) return; new Audio(url).play() }
   align-items: center; justify-content: center; transition: all 0.15s;
 }
 .pw-play:hover { background: rgba(99,102,241,0.15); }
+.pw-tts { margin-left: -2px; }
+.pw-tts:disabled { opacity: 0.4; cursor: not-allowed; }
 
 .pw-meanings { display: flex; flex-direction: column; gap: 7px; margin-bottom: 12px; }
 .pw-m-item { display: flex; align-items: baseline; gap: 8px; font-size: 14px; }
@@ -609,7 +825,8 @@ function playAudio(url) { if (!url) return; new Audio(url).play() }
 .pw-ex-cn { color: var(--text-secondary); margin-top: 3px; }
 
 /* Translate result */
-.pt-label { font-size: 11px; font-weight: 700; color: var(--primary); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px; }
+.pt-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+.pt-label { font-size: 11px; font-weight: 700; color: var(--primary); text-transform: uppercase; letter-spacing: 0.5px; }
 .pt-translation { font-size: 15px; color: var(--text); line-height: 1.65; font-weight: 500; margin-bottom: 14px; }
 .pt-keywords { margin-top: 4px; }
 .pt-kw-label { font-size: 11px; font-weight: 600; color: var(--text-tertiary); margin-bottom: 6px; display: block; }
@@ -633,6 +850,54 @@ function playAudio(url) { if (!url) return; new Audio(url).play() }
   font-size: 13px; font-weight: 600; box-shadow: var(--shadow-lg);
 }
 
+/* ===== TTS Player Bar ===== */
+.tts-bar {
+  position: fixed; bottom: 0; left: 0; right: 0; z-index: 450;
+  background: var(--surface); border-top: 1px solid var(--border);
+  padding: 10px 16px; display: flex; align-items: center; gap: 12px;
+  box-shadow: 0 -4px 20px rgba(0,0,0,0.08);
+  overflow: hidden;
+}
+.tts-progress {
+  position: absolute; top: 0; left: 0; height: 3px;
+  background: var(--gradient-primary); transition: width 0.3s linear;
+  border-radius: 0 2px 2px 0;
+}
+.tts-info {
+  display: flex; align-items: center; gap: 10px; flex: 1; min-width: 0;
+}
+.tts-icon {
+  width: 32px; height: 32px; border-radius: 50%;
+  background: rgba(99,102,241,0.1); color: var(--primary);
+  display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+}
+.tts-spinner {
+  width: 16px; height: 16px; border: 2px solid rgba(99,102,241,0.2);
+  border-top-color: var(--primary); border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+.tts-meta {
+  display: flex; flex-direction: column; gap: 1px; min-width: 0;
+}
+.tts-label {
+  font-size: 13px; font-weight: 600; color: var(--text); white-space: nowrap;
+}
+.tts-text {
+  font-size: 11px; color: var(--text-tertiary); white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis;
+}
+.tts-controls {
+  display: flex; align-items: center; gap: 4px; flex-shrink: 0;
+}
+.tts-ctrl {
+  width: 36px; height: 36px; border-radius: 50%; border: none;
+  background: var(--primary); color: white; cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  transition: all 0.15s;
+}
+.tts-ctrl:hover { opacity: 0.85; transform: scale(1.05); }
+.tts-ctrl:active { transform: scale(0.95); }
+
 /* ===== Transitions ===== */
 @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
 
@@ -653,6 +918,10 @@ function playAudio(url) { if (!url) return; new Audio(url).play() }
 .toast-leave-active { transition: all 0.12s ease; }
 .toast-enter-from, .toast-leave-to { opacity: 0; transform: translateX(-50%) translateY(8px); }
 
+.tts-bar-enter-active { transition: all 0.25s ease; }
+.tts-bar-leave-active { transition: all 0.15s ease; }
+.tts-bar-enter-from, .tts-bar-leave-to { opacity: 0; transform: translateY(100%); }
+
 /* ===== Mobile ===== */
 @media (max-width: 768px) {
   .article-title { font-size: 22px; }
@@ -664,5 +933,10 @@ function playAudio(url) { if (!url) return; new Audio(url).play() }
   .title-area { padding: 0; }
   .article-content { padding: 0; }
   .tb-btn { padding: 6px 12px; font-size: 12px; }
+  .copy-toast { bottom: 100px; }
+  .tts-bar { padding: 8px 12px; gap: 8px; }
+  .tts-icon { width: 28px; height: 28px; }
+  .tts-label { font-size: 12px; }
+  .tts-ctrl { width: 32px; height: 32px; }
 }
 </style>
