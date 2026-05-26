@@ -142,9 +142,10 @@ function handleMouseMove(e) { mousePos.x = e.clientX; mousePos.y = e.clientY }
 function handleTouchStart(e) {
   const t = e.touches[0]
   if (t) { lastTouchPos.x = t.clientX; lastTouchPos.y = t.clientY }
-  // Don't close if user tapped a toolbar button (the action handler manages closing)
-  if (e.target.closest('.sel-toolbar')) return
-  if (e.target.closest('.lookup-popup')) return
+  // Don't close if user tapped inside toolbar or popup
+  // Use composedPath to handle Shadow DOM / Teleport elements reliably on Safari
+  const path = e.composedPath()
+  if (path.some(el => el.classList?.contains('sel-toolbar') || el.classList?.contains('lookup-popup') || el.classList?.contains('tts-bar'))) return
   closeAll()
 }
 
@@ -160,9 +161,9 @@ function handleTouchEnd() {
 }
 
 function handleMouseDown(e) {
-  // Don't close if clicking toolbar buttons (action handler manages closing)
-  if (e.target.closest('.sel-toolbar')) return
-  if (e.target.closest('.lookup-popup')) return
+  // Don't close if clicking toolbar or popup buttons (action handler manages closing)
+  const path = e.composedPath()
+  if (path.some(el => el.classList?.contains('sel-toolbar') || el.classList?.contains('lookup-popup') || el.classList?.contains('tts-bar'))) return
   closeAll()
 }
 
@@ -495,18 +496,18 @@ function playAudio(url) { if (!url) return; new Audio(url).play() }
     <!-- Selection toolbar (floating above selection) -->
     <Teleport to="body">
       <Transition name="toolbar">
-        <div v-if="toolbar" class="sel-toolbar" :style="{ left: toolbar.x + 'px', top: toolbar.y + 'px' }">
-          <button class="tb-btn" @click="doTranslate" title="查词/翻译">
+        <div v-if="toolbar" class="sel-toolbar" :style="{ left: toolbar.x + 'px', top: toolbar.y + 'px' }" @touchend.stop @mousedown.stop>
+          <button class="tb-btn" @click.stop="doTranslate" @touchend.prevent.stop="doTranslate" title="查词/翻译">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 8l6 6"/><path d="M4 14l6-6 2-3"/><path d="M2 5h12"/><path d="M7 2h1"/><path d="M22 22l-5-10-5 10"/><path d="M14 18h6"/></svg>
             <span>翻译</span>
           </button>
           <div class="tb-divider"></div>
-          <button class="tb-btn" @click="doSpeakFromToolbar" title="朗读" :disabled="ttsLoading">
+          <button class="tb-btn" @click.stop="doSpeakFromToolbar" @touchend.prevent.stop="doSpeakFromToolbar" title="朗读" :disabled="ttsLoading">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/></svg>
             <span>朗读</span>
           </button>
           <div class="tb-divider"></div>
-          <button class="tb-btn" @click="doCopy" title="复制">
+          <button class="tb-btn" @click.stop="doCopy" @touchend.prevent.stop="doCopy" title="复制">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
             <span>复制</span>
           </button>
@@ -517,8 +518,8 @@ function playAudio(url) { if (!url) return; new Audio(url).play() }
     <!-- Result popup -->
     <Teleport to="body">
       <Transition name="popup">
-        <div v-if="popup" class="lookup-popup" :style="{ left: popup.x + 'px', top: popup.y + 'px' }">
-          <button class="popup-close" @click="closePopup">
+        <div v-if="popup" class="lookup-popup" :style="{ left: popup.x + 'px', top: popup.y + 'px' }" @touchend.stop @mousedown.stop>
+          <button class="popup-close" @click.stop="closePopup" @touchend.prevent.stop="closePopup">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
           </button>
 
@@ -533,10 +534,10 @@ function playAudio(url) { if (!url) return; new Audio(url).play() }
             <div class="pw-header">
               <span class="pw-word">{{ popup.data.word }}</span>
               <span class="pw-phonetic" v-if="popup.data.phonetic_us">{{ popup.data.phonetic_us }}</span>
-              <button v-if="popup.data.audio_us" class="pw-play" @click="playAudio(popup.data.audio_us)" title="播放发音">
+              <button v-if="popup.data.audio_us" class="pw-play" @click.stop="playAudio(popup.data.audio_us)" @touchend.prevent.stop="playAudio(popup.data.audio_us)" title="播放发音">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
               </button>
-              <button class="pw-play pw-tts" @click="doSpeak(popup.data.word)" :disabled="ttsLoading && ttsText !== popup.data.word" :title="ttsState === 'playing' && ttsText === popup.data.word ? '暂停' : '朗读'">
+              <button class="pw-play pw-tts" @click.stop="doSpeak(popup.data.word)" @touchend.prevent.stop="doSpeak(popup.data.word)" :disabled="ttsLoading && ttsText !== popup.data.word" :title="ttsState === 'playing' && ttsText === popup.data.word ? '暂停' : '朗读'">
                 <svg v-if="ttsState === 'playing' && ttsText === popup.data.word" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
                 <svg v-else width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/></svg>
               </button>
@@ -557,7 +558,7 @@ function playAudio(url) { if (!url) return; new Audio(url).play() }
           <template v-else-if="popup.type === 'translate' && popup.data">
             <div class="pt-header">
               <div class="pt-label">翻译</div>
-              <button class="pw-play pw-tts" @click="doSpeak(popup.text)" :disabled="ttsLoading && ttsText !== popup.text" :title="ttsState === 'playing' && ttsText === popup.text ? '暂停' : '朗读原文'">
+              <button class="pw-play pw-tts" @click.stop="doSpeak(popup.text)" @touchend.prevent.stop="doSpeak(popup.text)" :disabled="ttsLoading && ttsText !== popup.text" :title="ttsState === 'playing' && ttsText === popup.text ? '暂停' : '朗读原文'">
                 <svg v-if="ttsState === 'playing' && ttsText === popup.text" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
                 <svg v-else width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/></svg>
               </button>
@@ -592,7 +593,7 @@ function playAudio(url) { if (!url) return; new Audio(url).play() }
     <!-- TTS Player Bar -->
     <Teleport to="body">
       <Transition name="tts-bar">
-        <div v-if="ttsState !== 'idle'" class="tts-bar">
+        <div v-if="ttsState !== 'idle'" class="tts-bar" @touchend.stop @mousedown.stop>
           <div class="tts-progress" :style="{ width: ttsProgress + '%' }"></div>
           <div class="tts-info">
             <div class="tts-icon">
@@ -609,15 +610,15 @@ function playAudio(url) { if (!url) return; new Audio(url).play() }
             </div>
           </div>
           <div class="tts-controls">
-            <button v-if="ttsState === 'generating'" class="tts-ctrl" @click="cancelTts" title="取消">
+            <button v-if="ttsState === 'generating'" class="tts-ctrl" @click.stop="cancelTts" @touchend.prevent.stop="cancelTts" title="取消">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
             </button>
             <template v-else>
-              <button class="tts-ctrl" @click="toggleTtsPlay" :title="ttsState === 'playing' ? '暂停' : '继续'">
+              <button class="tts-ctrl" @click.stop="toggleTtsPlay" @touchend.prevent.stop="toggleTtsPlay" :title="ttsState === 'playing' ? '暂停' : '继续'">
                 <svg v-if="ttsState === 'playing'" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
                 <svg v-else width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
               </button>
-              <button class="tts-ctrl" @click="stopTts" title="停止">
+              <button class="tts-ctrl" @click.stop="stopTts" @touchend.prevent.stop="stopTts" title="停止">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="6" width="12" height="12" rx="1"/></svg>
               </button>
             </template>
